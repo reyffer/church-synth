@@ -6,6 +6,7 @@
 // One instance per voice.
 
 #include "Oscillator.h"
+#include "Unison.h"
 
 namespace cs
 {
@@ -19,31 +20,33 @@ public:
     }
 
     // Called when an idle voice starts a note: re-seeds drift and phases.
-    void startNote (const AnalogEngineParams& p, uint32_t seed) noexcept
+    void startNote (const EngineParams& p, uint32_t seed) noexcept
     {
         rng.seed (seed);
         noise.seed (seed * 2654435761u + 1u);
-        const bool randomPhase = p.drift > 0.0f || (p.unisonOn && unisonCount (p) > 1);
+        const bool randomPhase = p.drift > 0.0f || (p.unisonOn && unison::unisonCount (p) > 1);
         for (int u = 0; u < kMaxUnison; ++u)
             for (int o = 0; o < kNumOscs; ++o)
             {
                 driftOffset[u][o] = rng.bi();
                 osc[u][o].reset (randomPhase ? rng.uni() : 0.0f);
             }
-        activeUnison = unisonCount (p);
+        activeUnison = unison::unisonCount (p);
     }
 
     // Renders n samples (n <= kBlock) and ADDS them into outL/outR.
     // notePitch: played pitch in semitones incl. glide/bend/transpose.
     // fixedPitch: 60 + bend/transpose, used when key tracking is off.
-    void render (const AnalogEngineParams& p, float notePitch, float fixedPitch,
-                 int n, float* outL, float* outR) noexcept
+    // extMod: if non-null, the other engine's output replaces the Osc3/Noise modulator.
+    // modOut: receives this engine's mono output before its Volume (for cross-mod).
+    void render (const EngineParams& p, float notePitch, float fixedPitch,
+                 int n, float* outL, float* outR, const float* extMod, float* modOut) noexcept
     {
         if (! p.on)
             return;
 
         // --- unison layout -------------------------------------------------
-        const int count = unisonCount (p);
+        const int count = unison::unisonCount (p);
         if (count > activeUnison) // newly enabled sub-voices start at random phases
             for (int u = activeUnison; u < count; ++u)
                 for (int o = 0; o < kNumOscs; ++o)
@@ -51,7 +54,7 @@ public:
         activeUnison = count;
 
         float offset[kMaxUnison], panL[kMaxUnison], panR[kMaxUnison];
-        layoutUnison (p, count, offset, panL, panR);
+        unison::layoutUnison (p, count, offset, panL, panR);
 
         // --- per-oscillator increments (control rate) -----------------------
         const float enginePitch = (p.keytrack ? notePitch : fixedPitch) + p.coarse + p.fine;
@@ -82,14 +85,14 @@ public:
         const float fm2 = 8.0f * p.osc[1].fm * p.osc[1].fm;
         const bool usesFm = fm1 > 0.0f || fm2 > 0.0f;
         const float modNoise = std::clamp (p.modSource, 0.0f, 1.0f);
-        const bool need3 = vol3 > 0.0f || (usesFm && modNoise < 1.0f);
+        const bool need3 = vol3 > 0.0f || (usesFm && extMod == nullptr && modNoise < 1.0f);
         const bool need2 = vol2 > 0.0f;
         const bool need1 = vol1 > 0.0f || (need2 && p.sync);
-        const bool needNoise = p.noiseVolume > 0.0f || (usesFm && modNoise > 0.0f);
+        const bool needNoise = p.noiseVolume > 0.0f || (usesFm && extMod == nullptr && modNoise > 0.0f);
         if (needNoise)
             noise.setColour (p.noiseColor);
 
-        const float gainNorm = unisonNorm (p, count);
+        const float gainNorm = unison::unisonNorm (p, count);
         const float engVol = p.volume;
         const int wave1 = p.osc[0].wave, wave2 = p.osc[1].wave, wave3 = p.osc[2].wave;
 
@@ -102,7 +105,7 @@ public:
             {
                 auto* o = osc[u];
                 const float o3 = need3 ? o[2].tick (inc[u][2], wave3, duty[2]) : 0.0f;
-                const float mod = o3 + modNoise * (nz - o3);
+                const float mod = extMod != nullptr ? extMod[i] : o3 + modNoise * (nz - o3);
 
                 float o1 = 0.0f, wrapD = -1.0f;
                 if (need1)
@@ -125,18 +128,11 @@ public:
             }
 
             const float nOut = nz * p.noiseVolume;
-            outL[i] += (sumL * gainNorm + nOut) * engVol;
-            outR[i] += (sumR * gainNorm + nOut) * engVol;
+            const float l = sumL * gainNorm + nOut, r = sumR * gainNorm + nOut;
+            outL[i] += l * engVol;
+            outR[i] += r * engVol;
+            modOut[i] = 0.5f * (l + r);
         }
-    }
-
-    static int unisonCount (const AnalogEngineParams& p) noexcept
-    {
-        if (! p.unisonOn)
-            return 1;
-        if (p.unisonMode == UnisonSuper)
-            return 7;
-        return std::clamp (p.unisonVoices, 1, kMaxUnison);
     }
 
 private:
@@ -147,89 +143,5 @@ private:
     Rng rng;
     int activeUnison = 1;
 
-    static float detuneSemis (float d) noexcept
-    {
-        d = std::clamp (d, 0.0f, 1.0f);
-        return 6.0f * d * d * d; // fine control at low settings, +/-6 st at max
-    }
-
-    static void layoutUnison (const AnalogEngineParams& p, int count,
-                              float* offset, float* panL, float* panR) noexcept
-    {
-        static constexpr int kChords[kNumChords][5] = {
-            { 0, 12, -1, -1, -1 },  // Octave
-            { 0, 7, -1, -1, -1 },   // Fifth
-            { 0, 7, 12, -1, -1 },   // Fifth + octave
-            { 0, 4, 7, -1, -1 },    // Major
-            { 0, 3, 7, -1, -1 },    // Minor
-            { 0, 2, 7, -1, -1 },    // Sus2
-            { 0, 5, 7, -1, -1 },    // Sus4
-            { 0, 4, 7, 11, -1 },    // Major 7
-            { 0, 3, 7, 10, -1 },    // Minor 7
-            { 0, 4, 7, 10, -1 },    // Dominant 7
-            { 0, 4, 7, 14, -1 },    // Add 9
-            { 0, 4, 7, 9, 14 },     // 6/9
-        };
-        static constexpr float kSuperSpread[7] = { -1.0f, -0.62f, -0.29f, 0.0f, 0.31f, 0.65f, 0.97f };
-
-        if (count == 1)
-        {
-            offset[0] = 0.0f;
-            panL[0] = panR[0] = 1.0f;
-            return;
-        }
-
-        const float spread = detuneSemis (p.detune);
-        const float width = std::clamp (p.stereo, 0.0f, 1.0f);
-
-        for (int u = 0; u < count; ++u)
-        {
-            float pos; // -1..1 stereo/detune position
-            if (p.unisonMode == UnisonSuper)
-            {
-                pos = kSuperSpread[u];
-                offset[u] = pos * spread;
-            }
-            else if (p.unisonMode == UnisonChord)
-            {
-                const auto& ch = kChords[std::clamp (p.chord, 0, kNumChords - 1)];
-                int len = 0;
-                while (len < 5 && ch[len] >= 0)
-                    ++len;
-                offset[u] = (float) (ch[u % len] + 12 * (u / len));
-                pos = (u == 0) ? 0.0f : ((u & 1) ? 1.0f : -1.0f) * (0.4f + 0.6f * (float) u / (float) count);
-            }
-            else
-            {
-                pos = -1.0f + 2.0f * (float) u / (float) (count - 1);
-                offset[u] = pos * spread;
-            }
-            panGains (pos * width, panL[u], panR[u]);
-        }
-
-        if (p.unisonMode == UnisonSuper)
-        {
-            const float mix = std::clamp (p.superMix, 0.0f, 1.0f);
-            for (int u = 0; u < 7; ++u)
-            {
-                const float g = (u == 3) ? 1.0f - 0.55f * mix : 0.85f * mix;
-                panL[u] *= g;
-                panR[u] *= g;
-            }
-        }
-    }
-
-    static float unisonNorm (const AnalogEngineParams& p, int count) noexcept
-    {
-        if (count == 1)
-            return 1.0f;
-        if (p.unisonMode == UnisonSuper)
-        {
-            const float mix = std::clamp (p.superMix, 0.0f, 1.0f);
-            const float c = 1.0f - 0.55f * mix, s = 0.85f * mix;
-            return 1.0f / std::sqrt (c * c + 6.0f * s * s);
-        }
-        return 1.0f / std::sqrt ((float) count);
-    }
 };
 } // namespace cs

@@ -254,3 +254,5 @@ Hold (acts like sustain, also latches seq/arp), Transpose (octave, fine; fine is
 | 2026-11-04 | Generate all wavetables and noise sources in code (no external content). |
 | 2026-11-04 | Pigments layout, our own artwork, dark only. |
 | 2026-11-04 | AU + VST3 (Mac and Windows) from Milestone 1; AU is the live reference. |
+| 2026-11-04 | Milestone 1 done. Standalone opens all MIDI inputs automatically (Windows standalone didn't receive MIDI). |
+| 2026-11-04 | Milestone 2 done: Wavetable + Utility engines, cross-mod, 40 generated wavetables, 34 generated noises, WAV import. Phase-transform shapes are our own set: Pulse Width, Skew, Mirror, Sync, Steps, Bend, Squeeze. Wavetable/noise list order is permanent (append only). |

@@ -1,5 +1,7 @@
 #include "Parameters.h"
 
+#include "dsp/Content.h"
+
 namespace cs
 {
 namespace
@@ -14,6 +16,29 @@ const juce::StringArray kClassicModes { "Lowpass 6", "Lowpass 12", "Lowpass 24",
                                         "Notch 12", "Notch 24", "Notch 36",
                                         "All Pass 12", "All Pass 24", "All Pass 36" };
 const juce::StringArray kVoicing { "Mono", "Mono Legato", "Poly Reassign", "Poly Rotate" };
+const juce::StringArray kEngineTypes { "Analog", "Wavetable" };
+const juce::StringArray kFmTypes { "Linear FM", "Exponential FM", "Ring Mod" };
+const juce::StringArray kRetrig { "Key", "Random", "Free", "Mod Osc" };
+const juce::StringArray kPdShapes { "Pulse Width", "Skew", "Mirror", "Sync", "Steps", "Bend", "Squeeze" };
+const juce::StringArray kFoldShapes { "Sine", "Triangle", "Soft" };
+const juce::StringArray kModTune { "Ratio", "Absolute", "Relative", "Fixed Hz" };
+const juce::StringArray kModWaves { "Sine", "Triangle", "Saw", "Ramp", "Square",
+                                    "Blue Noise", "White Noise", "Pink Noise", "Red Noise", "Rumble" };
+const juce::StringArray kNoisePhase { "Key", "Random" };
+const juce::StringArray kRoutes { "Filters", "FX A", "FX B", "Direct" };
+
+juce::StringArray factoryNames (bool wavetables)
+{
+    auto& lib = ContentLibrary::get();
+    juce::StringArray names;
+    const int count = wavetables ? lib.numFactoryWavetables() : lib.numFactoryNoises();
+    for (int i = 0; i < count; ++i)
+    {
+        const auto e = wavetables ? lib.wavetableEntry (i) : lib.noiseEntry (i);
+        names.add (juce::String (e.category) + ": " + e.name);
+    }
+    return names;
+}
 
 struct Builder
 {
@@ -104,6 +129,67 @@ void addEngine (Builder& b, size_t e)
 
     b.flt (p + "vol", n + "Volume", 0, 1, 0.7f, [e] (SynthParams& s, float v) { s.engine[e].volume = v; });
     b.flt (p + "fmix", n + "Filter Mix F1/F2", 0, 1, 0, [e] (SynthParams& s, float v) { s.engine[e].filterMix = v; });
+
+    // --- Milestone 2: engine type, cross-mod, wavetable ----------------------
+    b.choice (p + "type", n + "Type", kEngineTypes, EngineAnalog, [e] (SynthParams& s, float v) { s.engine[e].type = asInt (v); });
+    b.boolean (p + "mod_eng", n + "Modulator = Other Engine", false, [e] (SynthParams& s, float v) { s.engine[e].modFromEngine = asBool (v); });
+
+    const juce::String w = p + "wt_";
+    const juce::String wn = n + "WT ";
+    // The table pointer itself is resolved by the content loader, not here.
+    b.choice (w + "table", wn + "Table", factoryNames (true), 0, [] (SynthParams&, float) {});
+    b.flt (w + "pos", wn + "Position", 0, 1, 0, [e] (SynthParams& s, float v) { s.engine[e].wt.position = v; });
+    b.boolean (w + "morph", wn + "Morph", true, [e] (SynthParams& s, float v) { s.engine[e].wt.morph = asBool (v); });
+    b.flt (w + "vol", wn + "Wavetable Volume", 0, 1, 1, [e] (SynthParams& s, float v) { s.engine[e].wt.wtVolume = v; });
+    b.choice (w + "fm_type", wn + "FM Type", kFmTypes, FmLinear, [e] (SynthParams& s, float v) { s.engine[e].wt.fmType = asInt (v); });
+    b.flt (w + "fm", wn + "FM / Ring Amount", 0, 1, 0, [e] (SynthParams& s, float v) { s.engine[e].wt.fmAmount = v; });
+    b.flt (w + "pm", wn + "Phase Mod", 0, 1, 0, [e] (SynthParams& s, float v) { s.engine[e].wt.pmAmount = v; });
+    b.choice (w + "retrig", wn + "Phase Retrig", kRetrig, RetrigKey, [e] (SynthParams& s, float v) { s.engine[e].wt.retrig = asInt (v); });
+    b.flt (w + "phase", wn + "Start Phase", 0, 360, 0, [e] (SynthParams& s, float v) { s.engine[e].wt.initPhase = v / 360.0f; }, "deg");
+    b.choice (w + "pd_type", wn + "Phase Transform Type", kPdShapes, PdPulseWidth, [e] (SynthParams& s, float v) { s.engine[e].wt.pdShape = asInt (v); });
+    b.flt (w + "pd", wn + "Phase Transform", 0, 1, 0, [e] (SynthParams& s, float v) { s.engine[e].wt.pdAmount = v; });
+    b.flt (w + "pd_mod", wn + "Phase Transform Mod", 0, 1, 0, [e] (SynthParams& s, float v) { s.engine[e].wt.pdMod = v; });
+    b.choice (w + "fold_type", wn + "Fold Shape", kFoldShapes, FoldSine, [e] (SynthParams& s, float v) { s.engine[e].wt.foldShape = asInt (v); });
+    b.flt (w + "fold", wn + "Fold", 0, 1, 0, [e] (SynthParams& s, float v) { s.engine[e].wt.foldAmount = v; });
+    b.flt (w + "fold_mod", wn + "Fold Mod", 0, 1, 0, [e] (SynthParams& s, float v) { s.engine[e].wt.foldMod = v; });
+    b.flt (w + "uni_phase", wn + "Unison Phase", 0, 1, 1, [e] (SynthParams& s, float v) { s.engine[e].wt.unisonPhase = v; });
+    b.choice (w + "mod_tune_mode", wn + "Mod Osc Tune Mode", kModTune, ModTuneRatio, [e] (SynthParams& s, float v) { s.engine[e].wt.modTuneMode = asInt (v); });
+    b.integer (w + "mod_coarse", wn + "Mod Osc Coarse", -48, 48, 0, [e] (SynthParams& s, float v) { s.engine[e].wt.modCoarse = v; });
+    b.flt (w + "mod_ratio", wn + "Mod Osc Ratio", 0.125f, 16, 1, [e] (SynthParams& s, float v) { s.engine[e].wt.modRatio = v; }, "x", 2.0f);
+    b.flt (w + "mod_hz", wn + "Mod Osc Fixed Hz", 0.1f, 10000, 110, [e] (SynthParams& s, float v) { s.engine[e].wt.modHz = v; }, "Hz", 300.0f);
+    b.flt (w + "mod_fine", wn + "Mod Osc Fine", -1, 1, 0, [e] (SynthParams& s, float v) { s.engine[e].wt.modFine = v; }, "st");
+    b.flt (w + "mod_vol", wn + "Mod Osc Volume", 0, 1, 0, [e] (SynthParams& s, float v) { s.engine[e].wt.modVolume = v; });
+    b.choice (w + "mod_wave", wn + "Mod Osc Wave", kModWaves, ModSine, [e] (SynthParams& s, float v) { s.engine[e].wt.modWave = asInt (v); });
+}
+
+void addUtility (Builder& b)
+{
+    b.group = "Utility";
+    b.boolean ("u_on", "Utility On", true, [] (SynthParams& s, float v) { s.utility.on = asBool (v); });
+    for (size_t k = 0; k < 2; ++k)
+    {
+        const juce::String p = "u_n" + juce::String ((int) k + 1) + "_";
+        const juce::String n = "Noise" + juce::String ((int) k + 1) + " ";
+        b.boolean (p + "on", n + "On", true, [k] (SynthParams& s, float v) { s.utility.noise[k].on = asBool (v); });
+        b.choice (p + "type", n + "Sample", factoryNames (false), k == 0 ? 0 : 9, [] (SynthParams&, float) {});
+        b.choice (p + "phase", n + "Phase", kNoisePhase, 1, [k] (SynthParams& s, float v) { s.utility.noise[k].randomPhase = asInt (v) == 1; });
+        b.boolean (p + "kbd", n + "Key Track", false, [k] (SynthParams& s, float v) { s.utility.noise[k].keytrack = asBool (v); });
+        b.flt (p + "tune", n + "Tune", -36, 36, 0, [k] (SynthParams& s, float v) { s.utility.noise[k].tune = v; }, "st");
+        b.flt (p + "filter", n + "Filter LP/HP", -1, 1, 0, [k] (SynthParams& s, float v) { s.utility.noise[k].filter = v; });
+        b.boolean (p + "loop", n + "Loop", true, [k] (SynthParams& s, float v) { s.utility.noise[k].loop = asBool (v); });
+        b.flt (p + "len", n + "Length", 0, 1, 1, [k] (SynthParams& s, float v) { s.utility.noise[k].length = v; });
+        b.flt (p + "fmix", n + "Filter Mix F1/F2", 0, 1, 0, [k] (SynthParams& s, float v) { s.utility.noise[k].filterMix = v; });
+        b.flt (p + "vol", n + "Volume", 0, 1, 0, [k] (SynthParams& s, float v) { s.utility.noise[k].volume = v; });
+    }
+    b.boolean ("u_osc_on", "Utility Osc On", true, [] (SynthParams& s, float v) { s.utility.oscOn = asBool (v); });
+    b.choice ("u_osc_wave", "Utility Osc Wave", kWaves, WaveSine, [] (SynthParams& s, float v) { s.utility.oscWave = asInt (v); });
+    b.flt ("u_osc_width", "Utility Osc Width", 0, 1, 0.5f, [] (SynthParams& s, float v) { s.utility.oscWidth = v; });
+    b.flt ("u_osc_coarse", "Utility Osc Coarse", -36, 36, -12, [] (SynthParams& s, float v) { s.utility.oscCoarse = (float) asInt (v); }, "st");
+    b.flt ("u_osc_fine", "Utility Osc Fine", -1, 1, 0, [] (SynthParams& s, float v) { s.utility.oscFine = v; }, "st");
+    b.boolean ("u_osc_kbd", "Utility Osc Key Track", true, [] (SynthParams& s, float v) { s.utility.oscKeytrack = asBool (v); });
+    b.flt ("u_osc_fmix", "Utility Osc Filter Mix F1/F2", 0, 1, 0, [] (SynthParams& s, float v) { s.utility.oscFilterMix = v; });
+    b.flt ("u_osc_vol", "Utility Osc Volume", 0, 1, 0, [] (SynthParams& s, float v) { s.utility.oscVolume = v; });
+    b.choice ("u_osc_route", "Utility Osc Output", kRoutes, RouteFilters, [] (SynthParams& s, float v) { s.utility.oscRoute = asInt (v); });
 }
 
 void addFilter (Builder& b, size_t f)
@@ -136,6 +222,7 @@ std::vector<ParamDef> build()
 
     addEngine (b, 0);
     addEngine (b, 1);
+    addUtility (b);
     addFilter (b, 0);
     addFilter (b, 1);
 

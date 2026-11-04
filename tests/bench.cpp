@@ -32,17 +32,32 @@ int main (int argc, char** argv)
     constexpr int block = 128;
     constexpr float seconds = 8.0f;
 
+    {
+        // First-use generation cost of all factory content (happens once per process, off the audio thread).
+        const auto g0 = std::chrono::steady_clock::now();
+        auto& lib = ContentLibrary::get();
+        for (int i = 0; i < lib.numFactoryWavetables(); ++i) lib.factoryWavetable (i);
+        for (int i = 0; i < lib.numFactoryNoises(); ++i) lib.factoryNoise (i);
+        const double ms = std::chrono::duration<double, std::milli> (std::chrono::steady_clock::now() - g0).count();
+        std::printf ("content generation (all %d wavetables + %d noises): %.0f ms\n\n",
+                     lib.numFactoryWavetables(), lib.numFactoryNoises(), ms);
+    }
     const std::vector<int> chord8 { 48, 55, 60, 64, 67, 71, 74, 79 };
     const std::vector<Case> cases {
         { "init_1voice", patches::init(), { 60 } },
         { "init_8voices", patches::init(), chord8 },
         { "pad_8voices", patches::pad(), chord8 },
         { "supersaw_8voices", patches::supersaw(), chord8 },
+        { "wavetable_pad_8voices", patches::wavetablePad(), chord8 },
+        { "utility_8voices", patches::withUtility(), chord8 },
+        { "crossmod_8voices", patches::crossMod(), chord8 },
+        { "wavetable_heavy_16voices", patches::wavetableHeavy(),
+          { 36, 43, 48, 52, 55, 59, 60, 62, 64, 67, 69, 71, 72, 74, 76, 79 } },
         { "worstcase_16voices", patches::worstCase(),
           { 36, 43, 48, 52, 55, 59, 60, 62, 64, 67, 69, 71, 72, 74, 76, 79 } },
     };
 
-    std::printf ("%-22s %10s %12s\n", "patch", "us/block", "% one core");
+    std::printf ("%-26s %10s %12s\n", "patch", "us/block", "% one core");
     for (const auto& c : cases)
     {
         SynthCore s;
@@ -65,7 +80,7 @@ int main (int argc, char** argv)
 
         const double secs = std::chrono::duration<double> (t1 - t0).count();
         const double usPerBlock = secs * 1.0e6 / (double) (frames / block);
-        std::printf ("%-22s %10.1f %11.2f%%\n", c.name, usPerBlock, 100.0 * secs / seconds);
+        std::printf ("%-26s %10.1f %11.2f%%\n", c.name, usPerBlock, 100.0 * secs / seconds);
 
         if (! outDir.empty())
         {

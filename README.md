@@ -2,7 +2,7 @@
 
 A lean, reliable hybrid synth for live worship, built to run several instances in MainStage on an M1 MacBook Pro. Its architecture is modelled on Arturia Pigments (2 engines + utility, 2 filters, deep modulation, 3 FX buses, seq/arp), cut down to what we actually use. The full feature list is in [SPEC.md](SPEC.md).
 
-**Status: Milestone 1.** Analog engine (×2), Classic filter (×2), amp envelope, poly/mono/glide. The editor is a temporary parameter list; the Pigments-style UI comes in Milestone 7.
+**Status: Milestone 2.** Two engine slots (Analog or Wavetable, with cross-mod), Utility engine (2 noise players + sub osc), 40 generated wavetables and 34 generated noises, user WAV import, Classic filter (×2), amp envelope, poly/mono/glide. The editor is temporary (file pickers + parameter list); the Pigments-style UI comes in Milestone 7.
 
 ## Getting a build
 
@@ -27,6 +27,13 @@ Updating: quit MainStage, replace the component, run step 2 again, reopen.
 Download and unzip `ChurchSynth-VST3-windows.zip`, then copy **Church Synth.vst3** to `C:\Program Files\Common Files\VST3\`.
 
 `ChurchSynth-Standalone-windows.zip` has a standalone `.exe` (no DAW needed). It opens all MIDI inputs automatically. On Windows, a MIDI device can only be used by one program at a time, so close any DAW that is holding the controller first.
+
+## Your own wavetables and noises
+
+In the editor, use **Load file...** next to an engine's wavetable or a noise slot. The file is copied to `Documents/Church Synth/Wavetables` or `.../Noises`, and the patch remembers it by file name. Copy that folder to another computer and the same patches load there too.
+
+- Wavetables: WAV/AIFF/FLAC, one single cycle per 2048 samples, up to 256 frames (the usual wavetable format; longer files are sliced into frames).
+- Noises: any sample up to 20 s, mono or stereo.
 
 ## Building locally
 

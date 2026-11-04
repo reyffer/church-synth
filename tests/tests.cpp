@@ -3,6 +3,7 @@
 
 #include "Patches.h"
 #include "dsp/SynthCore.h"
+#include "dsp/WavetableEngine.h"
 
 #include <cmath>
 #include <cstdio>
@@ -209,8 +210,211 @@ static void testDriveLevelIsSmooth()
     }
 }
 
+// --- Milestone 2 ----------------------------------------------------------
+
+static void testFactoryWavetablesPlay()
+{
+    auto& lib = ContentLibrary::get();
+    for (int t = 0; t < lib.numFactoryWavetables(); ++t)
+        for (float pos : { 0.0f, 0.5f, 1.0f })
+        {
+            SynthCore s;
+            s.setSampleRate (48000.0f);
+            auto& e = s.params.engine[0];
+            e.type = EngineWavetable;
+            e.wt.table = lib.factoryWavetable (t);
+            e.wt.position = pos;
+            s.params.filter[0].on = false;
+            s.noteOn (57, 1.0f);
+            renderStats (s, 1200);
+            const auto st = renderStats (s, 9600);
+            char msg[160];
+            std::snprintf (msg, sizeof msg, "wavetable %d (%s) pos %.1f", t, lib.wavetableEntry (t).name, pos);
+            CHECK (st.finite, msg);
+            CHECK (st.rms > 0.005f, msg);
+            CHECK (st.peak < 0.6f, msg);
+        }
+}
+
+// Spectrum check: a high saw from the wavetable must not alias (mip-mapping works).
+static void testWavetableNoAliasing()
+{
+    SynthCore s;
+    s.setSampleRate (48000.0f);
+    auto& e = s.params.engine[0];
+    e.type = EngineWavetable;
+    e.wt.table = ContentLibrary::get().factoryWavetable (1); // Saw to Square, frame 0 = saw
+    e.wt.position = 0.0f;
+    e.wt.morph = false;
+    s.params.filter[0].on = false;
+    s.params.ampVelocity = 0.0f;
+    s.noteOn (100, 1.0f); // ~2637 Hz: harmonics above 9 would alias without mip-mapping
+    renderStats (s, 4800);
+    constexpr int n = 16384;
+    std::vector<float> l (n), r (n);
+    s.render (l.data(), r.data(), n);
+    std::vector<std::complex<double>> b (n);
+    for (int i = 0; i < n; ++i)
+    {
+        const double w = 0.42 - 0.5 * std::cos (2 * 3.141592653589793 * i / n) + 0.08 * std::cos (4 * 3.141592653589793 * i / n);
+        b[(size_t) i] = l[(size_t) i] * w;
+    }
+    content::fft (b, false);
+    const double f0 = 440.0 * std::pow (2.0, (100 - 69) / 12.0);
+    double peak = 0.0, worstAlias = 0.0;
+    for (int k = 1; k < n / 2; ++k)
+    {
+        const double hz = k * 48000.0 / n, mag = std::abs (b[(size_t) k]);
+        peak = std::max (peak, mag);
+        const double h = std::round (hz / f0);
+        if (std::abs (hz - h * f0) > 80.0 && hz > 100.0 && hz < 16000.0)
+            worstAlias = std::max (worstAlias, mag);
+    }
+    const double db = 20.0 * std::log10 (worstAlias / peak);
+    CHECK (db < -45.0, "wavetable aliasing below -45 dB at 2.6 kHz");
+}
+
+static void testPhaseTransformAndFoldRanges()
+{
+    for (int shape = 0; shape < PdCount; ++shape)
+        for (int i = 0; i <= 100; ++i)
+            for (float a : { 0.0f, 0.3f, 1.0f })
+            {
+                const float p = WavetableEngine::transformPhase ((float) i / 101.0f, shape, a);
+                CHECK (p >= 0.0f && p < 1.0f, "phase transform stays within one cycle");
+            }
+    for (int shape = 0; shape < FoldCount; ++shape)
+        for (int i = -100; i <= 100; ++i)
+        {
+            const float y = WavetableEngine::fold ((float) i / 100.0f, shape, 1.0f);
+            CHECK (std::isfinite (y) && std::abs (y) <= 1.01f, "fold output bounded");
+        }
+}
+
+static void testAllWavetableFeatures()
+{
+    auto& lib = ContentLibrary::get();
+    for (int fm = 0; fm < FmTypeCount; ++fm)
+        for (int rt = 0; rt < RetrigCount; ++rt)
+            for (int pd = 0; pd < PdCount; ++pd)
+                for (int mw : { (int) ModSine, (int) ModSquare, (int) ModPinkNoise })
+                {
+                    SynthCore s;
+                    s.setSampleRate (44100.0f);
+                    auto& e = s.params.engine[0];
+                    e.type = EngineWavetable;
+                    e.wt.table = lib.factoryWavetable (pd % lib.numFactoryWavetables());
+                    e.wt.position = 0.6f;
+                    e.wt.fmType = fm;
+                    e.wt.fmAmount = 0.6f;
+                    e.wt.pmAmount = 0.5f;
+                    e.wt.retrig = rt;
+                    e.wt.pdShape = pd;
+                    e.wt.pdAmount = 0.5f;
+                    e.wt.pdMod = 0.5f;
+                    e.wt.foldShape = pd % FoldCount;
+                    e.wt.foldAmount = 0.5f;
+                    e.wt.foldMod = 0.5f;
+                    e.wt.modWave = mw;
+                    e.wt.modTuneMode = pd % ModTuneCount;
+                    e.wt.modVolume = 0.3f;
+                    e.unisonOn = true;
+                    e.unisonMode = pd % UnisonModeCount;
+                    s.noteOn (40 + pd * 5, 1.0f);
+                    const auto st = renderStats (s, 4410);
+                    CHECK (st.finite, "wavetable feature combination finite");
+                    CHECK (st.peak < 2.0f, "wavetable feature combination bounded");
+                }
+}
+
+static void testNoisesAndUtility()
+{
+    auto& lib = ContentLibrary::get();
+    for (int k = 0; k < lib.numFactoryNoises(); ++k)
+        for (bool loop : { true, false })
+        {
+            SynthCore s;
+            s.setSampleRate (48000.0f);
+            s.params.engine[0].on = false;
+            auto& u = s.params.utility;
+            u.noise[0].sample = lib.factoryNoise (k);
+            u.noise[0].volume = 1.0f;
+            u.noise[0].loop = loop;
+            u.noise[0].length = 0.5f;
+            u.noise[0].keytrack = true;
+            u.noise[0].filter = (k % 3) - 1.0f;
+            u.oscVolume = 0.3f;
+            u.oscRoute = k % RouteCount;
+            s.noteOn (36 + k, 1.0f);
+            const auto st = renderStats (s, 48000 * 3);
+            char msg[128];
+            std::snprintf (msg, sizeof msg, "noise %d (%s) loop %d", k, lib.noiseEntry (k).name, (int) loop);
+            CHECK (st.finite, msg);
+            CHECK (st.peak < 1.5f, msg);
+            CHECK (st.rms > 0.001f, msg);
+        }
+}
+
+static void testCrossModBothWays()
+{
+    auto p = patches::crossMod();
+    for (int mode = 0; mode < 3; ++mode)
+    {
+        SynthCore s;
+        s.setSampleRate (48000.0f);
+        s.params = p;
+        s.params.engine[1].modFromEngine = mode >= 1; // mode 2: both directions
+        s.params.engine[1].osc[0].fm = 0.5f;
+        s.params.engine[0].modFromEngine = mode != 1;
+        s.params.engine[1].volume = 0.4f;
+        s.noteOn (60, 1.0f);
+        s.noteOn (67, 1.0f);
+        const auto st = renderStats (s, 48000);
+        CHECK (st.finite && st.peak < 2.0f && st.rms > 0.005f, "cross-mod renders");
+    }
+}
+
+static void testEngineTypeSwitchWhileHeld()
+{
+    SynthCore s;
+    s.setSampleRate (48000.0f);
+    s.noteOn (60, 1.0f);
+    renderStats (s, 4800);
+    s.params.engine[0].type = EngineWavetable;
+    s.params.engine[0].wt.table = ContentLibrary::get().factoryWavetable (0);
+    const auto st = renderStats (s, 4800);
+    CHECK (st.finite && st.rms > 0.01f, "switching engine type on a held note keeps sounding");
+    s.params.engine[0].wt.table = nullptr; // content still loading: silent, not a crash
+    CHECK (renderStats (s, 4800).finite, "missing wavetable is safe");
+}
+
+static void testWavImportSlicing()
+{
+    std::vector<float> x (2048 * 3 + 100);
+    for (size_t i = 0; i < x.size(); ++i)
+    {
+        const size_t frame = i / 2048;
+        x[i] = (float) std::sin (2.0 * 3.141592653589793 * (double) ((frame + 1) * (i % 2048)) / 2048.0);
+    }
+    auto wt = Wavetable::fromSamples ("test", x.data(), x.size());
+    CHECK (wt->getNumFrames() == 3, "WAV import makes one frame per 2048 samples");
+    const float* f0 = wt->frame (0, 0);
+    double err = 0.0;
+    for (int i = 0; i < 2048; ++i)
+        err = std::max (err, std::abs ((double) f0[i] - std::sin (2.0 * 3.141592653589793 * i / 2048.0)));
+    CHECK (err < 1.0e-3, "imported frame reproduces the source cycle");
+}
+
 int main()
 {
+    testFactoryWavetablesPlay();
+    testWavetableNoAliasing();
+    testPhaseTransformAndFoldRanges();
+    testAllWavetableFeatures();
+    testNoisesAndUtility();
+    testCrossModBothWays();
+    testEngineTypeSwitchWhileHeld();
+    testWavImportSlicing();
     testDriveLevelIsSmooth();
     testOscillatorsBoundedAndCentred();
     testFiltersStable();

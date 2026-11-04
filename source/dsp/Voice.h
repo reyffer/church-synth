@@ -1,6 +1,8 @@
 #pragma once
 
 #include "AnalogEngine.h"
+#include "UtilityEngine.h"
+#include "WavetableEngine.h"
 #include "ClassicFilter.h"
 #include "Envelope.h"
 
@@ -12,8 +14,12 @@ public:
     void setSampleRate (float sr) noexcept
     {
         sampleRate = sr;
-        for (auto& e : eng)
-            e.setSampleRate (sr);
+        for (int e = 0; e < kNumEngines; ++e)
+        {
+            analog[e].setSampleRate (sr);
+            wavetable[e].setSampleRate (sr);
+        }
+        utility.setSampleRate (sr);
         for (auto& f : filt)
             f.setSampleRate (sr);
         env.setSampleRate (sr);
@@ -44,7 +50,11 @@ public:
         pitch = fromPitch;
         glideStart (p);
         for (int e = 0; e < kNumEngines; ++e)
-            eng[e].startNote (p.engine[(size_t) e], seed + 7919u * (uint32_t) e);
+            startEngine (p, e, seed + 7919u * (uint32_t) e);
+        utility.startNote (p.utility, seed + 104729u);
+        for (auto& m : prevMod)
+            for (auto& v : m)
+                v = 0.0f;
         for (auto& f : filt)
             f.reset();
         for (int f = 0; f < kNumFilters; ++f)
@@ -123,14 +133,38 @@ public:
         const float fixedPitch = 60.0f + transpose;
 
         // --- engines --------------------------------------------------------
+        // Cross-mod: an engine can use the other engine's output as its modulator.
+        // The source is rendered first; if both modulate each other, engine 1
+        // hears engine 2's previous block (16 samples late, inherently wild).
         float in1L[kBlock] {}, in1R[kBlock] {}, in2L[kBlock] {}, in2R[kBlock] {};
-        for (int e = 0; e < kNumEngines; ++e)
+        float postL[kBlock] {}, postR[kBlock] {};
+        float modBuf[kNumEngines][kBlock] {};
+        const auto& e1 = p.engine[0];
+        const auto& e2 = p.engine[1];
+        const bool x1 = e1.on && e2.on && e1.modFromEngine;
+        const bool x2 = e1.on && e2.on && e2.modFromEngine;
+        const int order[2] = { (x1 && ! x2) ? 1 : 0, (x1 && ! x2) ? 0 : 1 };
+        for (int k = 0; k < kNumEngines; ++k)
         {
+            const int e = order[k];
             const auto& ep = p.engine[(size_t) e];
             if (! ep.on)
                 continue;
+            if (ep.type != lastType[e])
+                startEngine (p, e, (uint32_t) age * 2654435761u + (uint32_t) e);
+
+            const int other = 1 - e;
+            const bool cross = e == 0 ? x1 : x2;
+            const float* ext = nullptr;
+            if (cross)
+                ext = (k == 0) ? prevMod[other] : modBuf[other];
+
             float eL[kBlock] {}, eR[kBlock] {};
-            eng[e].render (ep, notePitch, fixedPitch, n, eL, eR);
+            if (ep.type == EngineWavetable)
+                wavetable[e].render (ep, notePitch, fixedPitch, n, eL, eR, ext, modBuf[e]);
+            else
+                analog[e].render (ep, notePitch, fixedPitch, n, eL, eR, ext, modBuf[e]);
+
             const float toF2 = std::clamp (ep.filterMix, 0.0f, 1.0f), toF1 = 1.0f - toF2;
             for (int i = 0; i < n; ++i)
             {
@@ -140,6 +174,11 @@ public:
                 in2R[i] += eR[i] * toF2;
             }
         }
+        for (int e = 0; e < kNumEngines; ++e)
+            for (int i = 0; i < kBlock; ++i)
+                prevMod[e][i] = i < n ? modBuf[e][i] : 0.0f;
+
+        utility.render (p.utility, notePitch, fixedPitch, n, in1L, in1R, in2L, in2R, postL, postR);
 
         // --- filters (coefficients at control rate, cutoff smoothed in log2) ----
         float fGainL[kNumFilters], fGainR[kNumFilters];
@@ -181,7 +220,7 @@ public:
             bL *= fGainL[1];
             bR *= fGainR[1];
 
-            const float yL = bL + par * aL, yR = bR + par * aR;
+            const float yL = bL + par * aL + postL[i], yR = bR + par * aR + postR[i];
 
             envV += envStep;
             if (stealing)
@@ -207,7 +246,21 @@ public:
 
 private:
     float sampleRate = 48000.0f;
-    AnalogEngine eng[kNumEngines];
+    AnalogEngine analog[kNumEngines];
+    WavetableEngine wavetable[kNumEngines];
+    UtilityEngine utility;
+    int lastType[kNumEngines] { EngineAnalog, EngineAnalog };
+    float prevMod[kNumEngines][kBlock] {};
+
+    void startEngine (const SynthParams& p, int e, uint32_t seed) noexcept
+    {
+        const auto& ep = p.engine[(size_t) e];
+        lastType[e] = ep.type;
+        if (ep.type == EngineWavetable)
+            wavetable[e].startNote (ep, seed);
+        else
+            analog[e].startNote (ep, seed);
+    }
     ClassicFilter filt[kNumFilters];
     Envelope env;
 

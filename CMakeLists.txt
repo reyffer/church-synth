@@ -15,7 +15,10 @@ option(CS_BUILD_TESTS  "Build DSP tests and the CPU benchmark" ON)
 
 # ---------------------------------------------------------------------------
 # DSP core: plain C++, no JUCE, so it can be tested and benchmarked anywhere.
-add_library(cs_dsp STATIC source/dsp/SynthCore.cpp)
+add_library(cs_dsp STATIC
+    source/dsp/SynthCore.cpp
+    source/dsp/Content.cpp
+    source/dsp/ContentFactory.cpp)
 target_include_directories(cs_dsp PUBLIC source)
 set_target_properties(cs_dsp PROPERTIES POSITION_INDEPENDENT_CODE ON)
 if(MSVC)
@@ -88,6 +91,7 @@ if(CS_BUILD_PLUGIN)
         PRIVATE
             cs_dsp
             juce::juce_audio_utils
+            juce::juce_audio_formats
         PUBLIC
             juce::juce_recommended_config_flags
             juce::juce_recommended_lto_flags

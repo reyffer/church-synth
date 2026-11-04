@@ -2,6 +2,7 @@
 
 // Reference patches shared by the tests and the CPU benchmark.
 
+#include "dsp/Content.h"
 #include "dsp/Params.h"
 
 namespace cs::patches
@@ -74,6 +75,85 @@ inline SynthParams worstCase()
     p.filter[0] = { true, LP36, 2500.0f, 0.5f, 0.5f, true, 0.5f, 1.0f, -0.3f };
     p.filter[1] = { true, HP36, 200.0f, 0.3f, 0.2f, true, 0.0f, 1.0f, 0.3f };
     p.filterRouting = 0.5f;
+    p.maxVoices = 16;
+    return p;
+}
+// Wavetable pad: 2 wavetable engines with unison, morph position, LP24.
+inline SynthParams wavetablePad()
+{
+    SynthParams p;
+    auto& lib = ContentLibrary::get();
+    for (int e = 0; e < 2; ++e)
+    {
+        auto& eng = p.engine[(size_t) e];
+        eng.on = true;
+        eng.type = EngineWavetable;
+        eng.wt.table = lib.factoryWavetable (e == 0 ? 30 : 15); // Warm Pad, Vowels
+        eng.wt.position = e == 0 ? 0.4f : 0.2f;
+        eng.unisonOn = true;
+        eng.unisonVoices = 4;
+        eng.detune = 0.3f;
+        eng.stereo = 0.8f;
+        eng.volume = 0.6f;
+    }
+    p.filter[0] = { true, LP24, 2500.0f, 0.2f, 0.0f, true, 0.3f, 1.0f, 0.0f };
+    p.ampEnv.attack = 0.8f;
+    p.ampEnv.release = 2.0f;
+    return p;
+}
+
+// Analog saw + breath noise + sub oscillator (Utility engine).
+inline SynthParams withUtility()
+{
+    SynthParams p;
+    auto& lib = ContentLibrary::get();
+    p.utility.noise[0].sample = lib.factoryNoise (19); // Breath
+    p.utility.noise[0].volume = 0.4f;
+    p.utility.noise[1].sample = lib.factoryNoise (29); // Chiff (one-shot)
+    p.utility.noise[1].loop = false;
+    p.utility.noise[1].volume = 0.5f;
+    p.utility.oscVolume = 0.5f;
+    p.filter[0] = { true, LP24, 4000.0f, 0.1f, 0.0f, true, 0.0f, 1.0f, 0.0f };
+    return p;
+}
+
+// Wavetable engine FM'd by an analog engine (cross-mod), plus phase transform and fold.
+inline SynthParams crossMod()
+{
+    SynthParams p;
+    auto& lib = ContentLibrary::get();
+    auto& wt = p.engine[0];
+    wt.type = EngineWavetable;
+    wt.wt.table = lib.factoryWavetable (0);
+    wt.wt.position = 0.3f;
+    wt.modFromEngine = true;
+    wt.wt.fmAmount = 0.3f;
+    wt.wt.pdAmount = 0.4f;
+    wt.wt.pdShape = PdSkew;
+    wt.wt.foldAmount = 0.3f;
+    auto& an = p.engine[1];
+    an.on = true;
+    an.volume = 0.0f; // heard only through the cross-mod
+    an.coarse = 7.0f;
+    an.osc[0].wave = WaveSine;
+    return p;
+}
+
+// Full wavetable feature load: mod oscillator driving PM, PD and fold, unison 8, two engines.
+inline SynthParams wavetableHeavy()
+{
+    SynthParams p = wavetablePad();
+    for (auto& eng : p.engine)
+    {
+        eng.unisonVoices = 8;
+        eng.wt.pmAmount = 0.3f;
+        eng.wt.pdAmount = 0.3f;
+        eng.wt.pdMod = 0.2f;
+        eng.wt.foldAmount = 0.2f;
+        eng.wt.foldMod = 0.2f;
+        eng.wt.fmAmount = 0.2f;
+        eng.wt.modRatio = 2.0f;
+    }
     p.maxVoices = 16;
     return p;
 }

@@ -19,6 +19,21 @@ enum Wave : int { WaveSine = 0, WaveTriangle, WaveSaw, WaveRamp, WaveSquare, Wav
 
 enum UnisonMode : int { UnisonClassic = 0, UnisonChord, UnisonSuper, UnisonModeCount };
 
+enum EngineType : int { EngineAnalog = 0, EngineWavetable, EngineTypeCount };
+
+enum WtFmType : int { FmLinear = 0, FmExponential, FmRing, FmTypeCount };
+enum WtRetrig : int { RetrigKey = 0, RetrigRandom, RetrigFree, RetrigModOsc, RetrigCount };
+enum WtPhaseShape : int { PdPulseWidth = 0, PdSkew, PdMirror, PdSync, PdSteps, PdBend, PdSqueeze, PdCount };
+enum WtFoldShape : int { FoldSine = 0, FoldTriangle, FoldSoft, FoldCount };
+enum ModTuneMode : int { ModTuneRatio = 0, ModTuneAbsolute, ModTuneRelative, ModTuneFixed, ModTuneCount };
+// Mod oscillator waves: the 5 basic waves, then 5 noise colours.
+enum ModWave : int { ModSine = 0, ModTriangle, ModSaw, ModRamp, ModSquare,
+                     ModBlueNoise, ModWhiteNoise, ModPinkNoise, ModRedNoise, ModRumble, ModWaveCount };
+enum OscRoute : int { RouteFilters = 0, RouteFxA, RouteFxB, RouteDirect, RouteCount };
+
+class Wavetable;   // see Content.h
+class NoiseSample; // see Content.h
+
 enum Voicing : int { VoicingMono = 0, VoicingMonoLegato, VoicingPolyReassign, VoicingPolyRotate, VoicingCount };
 
 enum ClassicMode : int
@@ -44,9 +59,45 @@ struct OscParams
     float fm = 0.0f;      // 0..1, FM amount from the modulator (osc 1 and 2 only)
 };
 
-struct AnalogEngineParams
+struct WavetableParams
+{
+    const Wavetable* table = nullptr; // set by the host layer from the content library
+    float position = 0.0f;            // 0..1
+    bool morph = true;                // smooth vs stepped frame transitions
+    float wtVolume = 1.0f;            // level of the wavetable itself (pre-output)
+
+    int fmType = FmLinear;
+    float fmAmount = 0.0f;
+
+    float pmAmount = 0.0f;
+    int retrig = RetrigKey;
+    float initPhase = 0.0f; // 0..1 cycles
+
+    int pdShape = PdPulseWidth;
+    float pdAmount = 0.0f;
+    float pdMod = 0.0f; // modulator depth on the phase transform
+
+    int foldShape = FoldSine;
+    float foldAmount = 0.0f;
+    float foldMod = 0.0f;
+
+    float unisonPhase = 1.0f; // 0 = all unison voices start in phase, 1 = random
+
+    // Modulation oscillator
+    int modTuneMode = ModTuneRatio;
+    float modCoarse = 0.0f; // semitones (Absolute / Relative)
+    float modRatio = 1.0f;  // Ratio mode
+    float modHz = 110.0f;   // Fixed mode
+    float modFine = 0.0f;   // semitones
+    float modVolume = 0.0f; // direct output level of the mod oscillator
+    int modWave = ModSine;
+};
+
+struct EngineParams
 {
     bool on = true;
+    int type = EngineAnalog;
+    bool modFromEngine = false; // modulator = the other main engine (cross-mod)
     float coarse = 0.0f; // semitones, +/-60
     float fine = 0.0f;   // semitones, +/-1
     float drift = 0.0f;  // 0..1
@@ -69,6 +120,37 @@ struct AnalogEngineParams
 
     float volume = 0.7f;
     float filterMix = 0.0f; // 0 = Filter 1 only, 1 = Filter 2 only
+
+    WavetableParams wt {};
+};
+
+struct NoiseParams
+{
+    bool on = true;
+    const NoiseSample* sample = nullptr;
+    bool randomPhase = true; // false = start at the beginning on every note
+    bool keytrack = false;
+    float tune = 0.0f;   // semitones, +/-36
+    float filter = 0.0f; // -1 = darker (LP) .. 0 = open .. +1 = thinner (HP)
+    bool loop = true;
+    float length = 1.0f; // one-shot length 0..1 of the sample
+    float filterMix = 0.0f;
+    float volume = 0.0f;
+};
+
+struct UtilityParams
+{
+    bool on = true;
+    std::array<NoiseParams, 2> noise {};
+    bool oscOn = true;
+    int oscWave = WaveSine;
+    float oscWidth = 0.5f;
+    float oscCoarse = -12.0f;
+    float oscFine = 0.0f;
+    bool oscKeytrack = true;
+    float oscFilterMix = 0.0f;
+    float oscVolume = 0.0f;
+    int oscRoute = RouteFilters;
 };
 
 struct FilterParams
@@ -98,7 +180,8 @@ struct EnvParams
 
 struct SynthParams
 {
-    std::array<AnalogEngineParams, kNumEngines> engine {};
+    std::array<EngineParams, kNumEngines> engine {};
+    UtilityParams utility {};
     std::array<FilterParams, kNumFilters> filter {};
     float filterRouting = 0.0f; // 0 = F1 -> F2 (series), 1 = F1 // F2 (parallel)
 

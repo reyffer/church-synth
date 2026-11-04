@@ -10,6 +10,7 @@ Read SPEC.md first: it is the source of truth for features and holds the decisio
 - **Audio thread:** no allocation, locks, file I/O, logging or exceptions. All buffers are fixed-size (see `kBlock`, `kMaxVoices`, `kMaxUnison`).
 - **Parameter IDs are permanent.** Never rename or remove an ID in `source/plugin/Parameters.cpp`; saved MainStage concerts depend on them. Add new IDs instead. Macros 1–4 must stay the first parameters.
 - **Original code only.** Surge XT (GPL) may be read as a DSP reference, never copied. Never copy Arturia content (wavetables, noises, presets, artwork) or use their product/effect names in the UI. Our names: Drive filter (Rage-like), Allpass filter (Ripple-like), Erode (Corroder-like), Vintage Chorus (Juno-style), Vintage Flanger.
+- **Factory content order is permanent.** `kWavetableList` / `kNoiseList` in `ContentFactory.cpp` are indexed by host parameters: append only, never reorder or remove. Content can be retuned, but don't change a table's character so much that saved presets sound wrong.
 - DSP core (`source/dsp`) stays JUCE-free so it can be tested and benchmarked anywhere.
 - Every DSP change: `ctest` passes and `cs_bench` doesn't regress without a reason.
 
@@ -23,14 +24,17 @@ ctest --test-dir build --output-on-failure
 CI (`.github/workflows/build.yml`): macOS universal AU/VST3/Standalone with auval and pluginval (strictness 7); Windows VST3/Standalone with pluginval. The Apple Silicon benchmark is posted to the run summary.
 
 ## Architecture
-- `SynthCore` → 16 `Voice`s → per voice: 2 `AnalogEngine`s → filter-mix split → 2 `ClassicFilter`s (series↔parallel) → amp `Envelope` → pan.
+- `SynthCore` → 16 `Voice`s → per voice: 2 engine slots (each `AnalogEngine` or `WavetableEngine`) + `UtilityEngine` → filter-mix split → 2 `ClassicFilter`s (series↔parallel) → amp `Envelope` → pan. Utility osc can bypass the filters (post buffer).
+- Cross-mod: an engine's modulator can be the other engine's pre-volume output; the source engine renders first (mutual cross-mod uses the previous 16-sample block).
+- Content (`Content.h/.cpp`, `ContentFactory.cpp`): 40 wavetables + 34 noises synthesised in code, mip-mapped (11 levels), generated lazily and cached process-wide. The plugin's `Loader` thread resolves selections and user files into atomic pointers; the audio thread only reads pointers.
+- User files are copied to `Documents/Church Synth/Wavetables|Noises` and referenced by file name in the plugin state.
 - Control rate = 16 samples (pitch, filter coefficients, envelope points); audio rate for oscillators, FM and filtering.
 - Oscillators use polyBLEP/polyBLAMP with one sample of latency, so hard sync is band-limited exactly.
 - Voice stealing does a 3 ms fade before the new note starts. Retriggering a sounding voice never resets oscillator phase.
 
 ## Milestones (SPEC §9)
 1. ✅ Core voice: Analog engine, Classic filter, amp env, voicing, CI, benchmark.
-2. Wavetable + Utility engines, cross-mod, generated wavetables/noises, WAV import.
+2. ✅ Wavetable + Utility engines, cross-mod, generated wavetables/noises, WAV import.
 3. Modulation system (envs, LFOs, functions, random, combinators, macros, routing, sidechains).
 4. All filter types + Sum/Split routing.
 5. FX buses and all effects.
@@ -38,5 +42,5 @@ CI (`.github/workflows/build.yml`): macOS universal AU/VST3/Standalone with auva
 7. Presets/browser + Pigments-style UI (dark only).
 
 ## Performance notes
-- Benchmark baseline (x86 container, M1 numbers are in CI): pad 8 voices ≈ 5 % of one core; worst case (16 voices × 2 engines × 3 osc × unison 8) ≈ 29 %.
+- Benchmark baseline (x86 container, M1 numbers are in CI): analog pad 8 voices ≈ 5.5 %, wavetable pad ≈ 3.5 %, worst case ≈ 29 % of one core. Content generation for everything ≈ 2.4 s total, but only what's selected is generated.
 - Planned optimisation: process 4 unison sub-voices with SIMD (NEON/SSE), skip silent engines entirely (already done), cheaper sine.
