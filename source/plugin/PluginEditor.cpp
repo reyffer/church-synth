@@ -481,6 +481,7 @@ void SeqPanel::Lane::paint (juce::Graphics& g)
                 ghost = std::sqrt (r.gate / 4.0f);
                 break;
             case LaneSlide: frac = st.slide; text = st.slide > 0.0f ? juce::String (juce::roundToInt (cs::seqSlideSeconds (st.slide) * 1000.0f)) : juce::String(); break;
+            case NumLanes:
             default: break;
         }
         const float barH = cell.getHeight() * juce::jlimit (0.0f, 1.0f, frac);
@@ -545,6 +546,7 @@ void SeqPanel::Lane::edit (const juce::MouseEvent& e, bool first)
         case LaneOctave: st.octave = juce::jlimit (-2, 2, juce::roundToInt ((v - 0.5f) * 4.0f)); break;
         case LaneGate: st.gate = juce::jlimit (0.05f, 4.0f, v * v * 4.0f); break;
         case LaneSlide: st.slide = v < 0.08f ? 0.0f : v; break;
+        case NumLanes:
         default: break;
     }
     lastCol = c;
