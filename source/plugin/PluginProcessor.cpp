@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "PresetManager.h"
 
 namespace
 {
@@ -35,8 +36,21 @@ ChurchSynthProcessor::ChurchSynthProcessor()
       apvts (*this, nullptr, "ChurchSynth", cs::createParameterLayout())
 {
     for (const auto& d : cs::parameterDefs())
+    {
         rawParams.push_back (apvts.getRawParameterValue (d.id));
+        paramPtrs.push_back (apvts.getParameter (d.id));
+    }
+    for (int k = 0; k < cs::kNumFuncs; ++k)
+    {
+        funcShapeParam[k] = paramIndex ("func" + juce::String (k + 1) + "_shape");
+        funcEdit[k] = funcShared[k] = funcAudio[k] = cs::functionPreset (0);
+    }
+    for (auto& c : ccMap)
+        c.store (-1);
+    for (auto* prm : paramPtrs)
+        prm->addListener (this);
     formats.registerBasicFormats();
+    presetManager = std::make_unique<PresetManager> (*this);
 
     refreshContent(); // defaults ready before the first block
     loader = std::make_unique<Loader> (*this);
@@ -45,6 +59,7 @@ ChurchSynthProcessor::ChurchSynthProcessor()
     readFxTypes (lastFxType);
     fxHost.rebuild (lastFxType, (float) currentRate);
     startTimerHz (20);
+    resetHistory ("Init");
 }
 
 // --- FX ----------------------------------------------------------------------
@@ -98,6 +113,9 @@ void ChurchSynthProcessor::timerCallback()
 ChurchSynthProcessor::~ChurchSynthProcessor()
 {
     stopTimer();
+    cancelPendingUpdate();
+    for (auto* prm : paramPtrs)
+        prm->removeListener (this);
     loader->stopThread (2000);
 }
 
@@ -129,6 +147,205 @@ void ChurchSynthProcessor::pullParameters() noexcept
         synth.params.engine[e].wt.table = wtPtr[e].load (std::memory_order_acquire);
         synth.params.utility.noise[e].sample = noisePtr[e].load (std::memory_order_acquire);
     }
+    for (int k = 0; k < cs::kNumFuncs; ++k)
+        if ((int) std::lround (rawParams[(size_t) funcShapeParam[k]]->load (std::memory_order_relaxed)) >= cs::kNumFunctionPresets)
+            synth.params.func[(size_t) k].shape = &funcAudio[k];
+}
+
+// --- Custom function shapes ----------------------------------------------------
+cs::FunctionShape ChurchSynthProcessor::getCustomShape (int f) const
+{
+    const juce::ScopedLock sl (funcLock);
+    return funcEdit[juce::jlimit (0, cs::kNumFuncs - 1, f)];
+}
+
+void ChurchSynthProcessor::setCustomShape (int f, const cs::FunctionShape& shape)
+{
+    const juce::ScopedLock sl (funcLock);
+    funcEdit[juce::jlimit (0, cs::kNumFuncs - 1, f)] = shape;
+    funcSeq.fetch_add (1, std::memory_order_acq_rel);
+    std::atomic_thread_fence (std::memory_order_release);
+    for (int k = 0; k < cs::kNumFuncs; ++k)
+        funcShared[k] = funcEdit[k];
+    std::atomic_thread_fence (std::memory_order_release);
+    funcSeq.fetch_add (1, std::memory_order_acq_rel);
+    ++editCounter;
+}
+
+void ChurchSynthProcessor::pullFuncs() noexcept
+{
+    const uint32_t s1 = funcSeq.load (std::memory_order_acquire);
+    if (s1 == funcSeqSeen || (s1 & 1u) != 0)
+        return;
+    cs::FunctionShape tmp[cs::kNumFuncs];
+    for (int k = 0; k < cs::kNumFuncs; ++k)
+        tmp[k] = funcShared[k];
+    std::atomic_thread_fence (std::memory_order_acquire);
+    if (funcSeq.load (std::memory_order_acquire) != s1)
+        return;
+    for (int k = 0; k < cs::kNumFuncs; ++k)
+        funcAudio[k] = tmp[k];
+    funcSeqSeen = s1;
+}
+
+// --- Macro names -------------------------------------------------------------------
+juce::String ChurchSynthProcessor::getMacroName (int m) const
+{
+    return macroNames[juce::jlimit (0, 3, m)];
+}
+
+void ChurchSynthProcessor::setMacroName (int m, const juce::String& name)
+{
+    macroNames[juce::jlimit (0, 3, m)] = name.isEmpty() ? "Macro " + juce::String (m + 1) : name.substring (0, 24);
+    ++editCounter;
+}
+
+// --- MIDI learn ------------------------------------------------------------------------
+int ChurchSynthProcessor::paramIndex (const juce::String& id) const
+{
+    const auto& defs = cs::parameterDefs();
+    for (size_t i = 0; i < defs.size(); ++i)
+        if (defs[i].id == id)
+            return (int) i;
+    return -1;
+}
+
+void ChurchSynthProcessor::startMidiLearn (const juce::String& paramId)
+{
+    learnIndex.store (paramIndex (paramId));
+}
+
+juce::String ChurchSynthProcessor::learningParam() const
+{
+    const int i = learnIndex.load();
+    return i >= 0 ? cs::parameterDefs()[(size_t) i].id : juce::String();
+}
+
+int ChurchSynthProcessor::ccForParam (const juce::String& paramId) const
+{
+    const int idx = paramIndex (paramId);
+    for (int cc = 0; cc < 128; ++cc)
+        if (idx >= 0 && ccMap[cc].load() == idx)
+            return cc;
+    return -1;
+}
+
+void ChurchSynthProcessor::clearMidiMapping (const juce::String& paramId)
+{
+    const int idx = paramIndex (paramId);
+    for (auto& c : ccMap)
+        if (c.load() == idx)
+            c.store (-1);
+}
+
+// --- Undo history ------------------------------------------------------------------------
+void ChurchSynthProcessor::resetHistory (const juce::String& label)
+{
+    history.clear();
+    history.push_back ({ label, createStateTree(), juce::Time::currentTimeMillis() });
+    historyIndex = 0;
+    ++editCounter;
+}
+
+void ChurchSynthProcessor::checkpoint (const juce::String& label)
+{
+    if (restoring)
+        return;
+    const auto now = juce::Time::currentTimeMillis();
+    // Drop the redo branch, then merge quick repeats of the same edit (e.g. drawing a lane).
+    history.resize ((size_t) (historyIndex + 1));
+    if (historyIndex > 0 && history.back().label == label && now - history.back().time < 1500)
+        history.back() = { label, createStateTree(), now };
+    else
+        history.push_back ({ label, createStateTree(), now });
+    if (history.size() > 100)
+        history.erase (history.begin());
+    historyIndex = (int) history.size() - 1;
+    modified = true;
+    ++editCounter;
+}
+
+void ChurchSynthProcessor::jumpToHistory (int index)
+{
+    if (index < 0 || index >= (int) history.size() || index == historyIndex)
+        return;
+    historyIndex = index;
+    restoreStateTree (history[(size_t) index].state, LoadKind::Undo);
+    ++editCounter;
+}
+
+juce::StringArray ChurchSynthProcessor::historyLabels() const
+{
+    juce::StringArray a;
+    for (const auto& h : history)
+        a.add (h.label);
+    return a;
+}
+
+void ChurchSynthProcessor::parameterGestureChanged (int index, bool starting)
+{
+    // Only edits made in our editor (message thread) become undo steps.
+    if (starting || restoring || ! juce::MessageManager::existsAndIsCurrentThread())
+        return;
+    if (index >= 0 && index < (int) paramPtrs.size())
+        pendingGestureLabel = paramPtrs[(size_t) index]->getName (60);
+    triggerAsyncUpdate();
+}
+
+void ChurchSynthProcessor::handleAsyncUpdate()
+{
+    if (pendingGestureLabel.isNotEmpty())
+        checkpoint (pendingGestureLabel);
+    pendingGestureLabel.clear();
+}
+
+void ChurchSynthProcessor::setPresetInfo (const juce::String& name, const juce::String& category, bool isModified)
+{
+    currentPreset = name;
+    currentCategory = category;
+    modified = isModified;
+    ++editCounter;
+}
+
+// --- FX slot copy / swap ------------------------------------------------------------------
+void ChurchSynthProcessor::copyFxSlot (int from, int to)
+{
+    if (from == to || from < 0 || to < 0 || from >= cs::fx::kNumFxSlots || to >= cs::fx::kNumFxSlots)
+        return;
+    const juce::ScopedLock fxScope (fxLock);
+    auto copyParam = [this, from, to] (const char* suffix) {
+        auto* src = apvts.getParameter (fxParamId (from, suffix));
+        auto* dst = apvts.getParameter (fxParamId (to, suffix));
+        dst->setValueNotifyingHost (src->getValue());
+    };
+    copyParam ("type");
+    copyParam ("on");
+    copyParam ("sync");
+    for (int k = 0; k < cs::fx::kFxParams; ++k)
+        copyParam (("p" + juce::String (k + 1)).toRawUTF8());
+    readFxTypes (lastFxType); // the new type keeps the copied settings (no defaults)
+    fxHost.sync (lastFxType, (float) currentRate, synth.getRenderEpoch());
+}
+
+void ChurchSynthProcessor::swapFxSlots (int a, int b)
+{
+    if (a == b || a < 0 || b < 0 || a >= cs::fx::kNumFxSlots || b >= cs::fx::kNumFxSlots)
+        return;
+    const juce::ScopedLock fxScope (fxLock);
+    auto swapParam = [this, a, b] (const char* suffix) {
+        auto* pa = apvts.getParameter (fxParamId (a, suffix));
+        auto* pb = apvts.getParameter (fxParamId (b, suffix));
+        const float va = pa->getValue(), vb = pb->getValue();
+        pa->setValueNotifyingHost (vb);
+        pb->setValueNotifyingHost (va);
+    };
+    swapParam ("type");
+    swapParam ("on");
+    swapParam ("sync");
+    for (int k = 0; k < cs::fx::kFxParams; ++k)
+        swapParam (("p" + juce::String (k + 1)).toRawUTF8());
+    readFxTypes (lastFxType);
+    fxHost.sync (lastFxType, (float) currentRate, synth.getRenderEpoch());
 }
 
 // ---------------------------------------------------------------------------
@@ -489,6 +706,23 @@ cs::SeqPattern ChurchSynthProcessor::patternFromTree (const juce::ValueTree& t)
 // ---------------------------------------------------------------------------
 void ChurchSynthProcessor::handleMidi (const juce::MidiMessage& m) noexcept
 {
+    if (m.isController() && m.getControllerNumber() != 64 && m.getControllerNumber() < 120)
+    {
+        const int cc = m.getControllerNumber();
+        const int learn = learnIndex.load (std::memory_order_relaxed);
+        if (learn >= 0)
+        {
+            for (auto& c : ccMap) // one CC per parameter
+                if (c.load (std::memory_order_relaxed) == learn)
+                    c.store (-1, std::memory_order_relaxed);
+            ccMap[cc].store (learn, std::memory_order_relaxed);
+            learnIndex.store (-1, std::memory_order_relaxed);
+        }
+        const int target = ccMap[cc].load (std::memory_order_relaxed);
+        if (target >= 0 && target < (int) paramPtrs.size())
+            paramPtrs[(size_t) target]->setValueNotifyingHost ((float) m.getControllerValue() / 127.0f);
+    }
+
     if (m.isNoteOn())
         synth.noteOn (m.getNoteNumber(), m.getFloatVelocity());
     else if (m.isNoteOff())
@@ -514,6 +748,8 @@ void ChurchSynthProcessor::handleMidi (const juce::MidiMessage& m) noexcept
 void ChurchSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     juce::ScopedNoDenormals noDenormals;
+    const auto t0 = juce::Time::getHighResolutionTicks();
+    pullFuncs();
     pullParameters();
     pullRoutes();
     pullPattern();
@@ -556,6 +792,20 @@ void ChurchSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
 
     for (int ch = 2; ch < buffer.getNumChannels(); ++ch)
         buffer.clear (ch, 0, numSamples);
+
+    {
+        float pk = 0.0f;
+        for (int ch = 0; ch < juce::jmin (2, buffer.getNumChannels()); ++ch)
+            pk = juce::jmax (pk, buffer.getMagnitude (ch, 0, numSamples));
+        if (pk > outPeak.load (std::memory_order_relaxed))
+            outPeak.store (pk, std::memory_order_relaxed);
+    }
+
+    // CPU: time spent / time available, smoothed.
+    const double spent = juce::Time::highResolutionTicksToSeconds (juce::Time::getHighResolutionTicks() - t0);
+    const double avail = numSamples / juce::jmax (1.0, currentRate);
+    const float load = (float) (spent / juce::jmax (1.0e-6, avail));
+    cpuLoad.store (cpuLoad.load (std::memory_order_relaxed) * 0.9f + load * 0.1f, std::memory_order_relaxed);
 }
 
 juce::AudioProcessorEditor* ChurchSynthProcessor::createEditor()
@@ -563,10 +813,10 @@ juce::AudioProcessorEditor* ChurchSynthProcessor::createEditor()
     return new ChurchSynthEditor (*this);
 }
 
-void ChurchSynthProcessor::getStateInformation (juce::MemoryBlock& destData)
+juce::ValueTree ChurchSynthProcessor::createStateTree()
 {
     auto state = apvts.copyState();
-    state.setProperty ("stateVersion", 3, nullptr);
+    state.setProperty ("stateVersion", 4, nullptr);
     {
         const juce::ScopedLock sl (routeLock);
         state.removeChild (state.getChildWithName ("ROUTES"), nullptr);
@@ -580,11 +830,164 @@ void ChurchSynthProcessor::getStateInformation (juce::MemoryBlock& destData)
         state.appendChild (patternToTree (pat), nullptr);
     }
     {
+        const juce::ScopedLock sl (funcLock);
+        state.removeChild (state.getChildWithName ("FUNCS"), nullptr);
+        juce::ValueTree funcs ("FUNCS");
+        for (int k = 0; k < cs::kNumFuncs; ++k)
+        {
+            const auto& f = funcEdit[k];
+            juce::ValueTree e ("FUNC");
+            juce::String pts;
+            for (int i = 0; i < f.count; ++i)
+                pts << juce::String (f.x[i], 5) << "," << juce::String (f.y[i], 5) << "," << juce::String (f.curve[i], 4) << " ";
+            e.setProperty ("points", pts.trim(), nullptr);
+            e.setProperty ("sustain", f.sustain, nullptr);
+            e.setProperty ("loop", f.loopStart, nullptr);
+            funcs.appendChild (e, nullptr);
+        }
+        state.appendChild (funcs, nullptr);
+    }
+    for (int m = 0; m < 4; ++m)
+        state.setProperty ("macroName" + juce::String (m + 1), macroNames[m], nullptr);
+    {
+        state.removeChild (state.getChildWithName ("MIDIMAP"), nullptr);
+        juce::ValueTree mm ("MIDIMAP");
+        for (int cc = 0; cc < 128; ++cc)
+            if (const int idx = ccMap[cc].load(); idx >= 0)
+            {
+                juce::ValueTree e ("CC");
+                e.setProperty ("cc", cc, nullptr);
+                e.setProperty ("param", cs::parameterDefs()[(size_t) idx].id, nullptr);
+                mm.appendChild (e, nullptr);
+            }
+        state.appendChild (mm, nullptr);
+    }
+    {
         const juce::ScopedLock sl (contentLock);
         for (int slot = 0; slot < NumContentSlots; ++slot)
             state.setProperty (kSlotStateKey[slot], userFile[slot], nullptr);
     }
-    if (auto xml = state.createXml())
+    state.setProperty ("presetName", currentPreset, nullptr);
+    state.setProperty ("presetCategory", currentCategory, nullptr);
+    state.setProperty ("presetModified", modified, nullptr);
+    return state;
+}
+
+void ChurchSynthProcessor::restoreStateTree (const juce::ValueTree& source, LoadKind kind)
+{
+    if (! source.isValid())
+        return;
+    const juce::ScopedValueSetter<bool> guard (restoring, true);
+    auto tree = source.createCopy();
+    tree.removeProperty ("presetFormat", nullptr);
+
+    // Seq Lock: a preset load keeps the current pattern and sequencer settings.
+    const bool keepSeq = kind == LoadKind::Preset && apvts.getRawParameterValue ("seq_lock")->load() >= 0.5f;
+    if (keepSeq)
+    {
+        for (const auto& d : cs::parameterDefs())
+            if (d.id.startsWith ("seq_"))
+            {
+                auto child = tree.getChildWithProperty ("id", d.id);
+                if (! child.isValid())
+                {
+                    child = juce::ValueTree ("PARAM");
+                    child.setProperty ("id", d.id, nullptr);
+                    tree.appendChild (child, nullptr);
+                }
+                child.setProperty ("value", apvts.getRawParameterValue (d.id)->load(), nullptr);
+            }
+        tree.removeChild (tree.getChildWithName ("SEQ"), nullptr);
+        tree.appendChild (patternToTree (getPattern()), nullptr);
+    }
+
+    {
+        const juce::ScopedLock sl (contentLock);
+        for (int slot = 0; slot < NumContentSlots; ++slot)
+            userFile[slot] = tree.getProperty (kSlotStateKey[slot]).toString();
+    }
+    const auto routes = routesFromTree (tree.getChildWithName ("ROUTES"));
+    const auto pattern = patternFromTree (tree.getChildWithName ("SEQ"));
+    // Functions: drawn shapes (fall back to the first preset shape).
+    {
+        const auto funcs = tree.getChildWithName ("FUNCS");
+        const juce::ScopedLock sl (funcLock);
+        for (int k = 0; k < cs::kNumFuncs; ++k)
+        {
+            cs::FunctionShape f = cs::functionPreset (0);
+            const auto e = funcs.isValid() && k < funcs.getNumChildren() ? funcs.getChild (k) : juce::ValueTree();
+            if (e.isValid())
+            {
+                juce::StringArray pts;
+                pts.addTokens (e["points"].toString(), " ", {});
+                int n = 0;
+                for (const auto& ptxt : pts)
+                {
+                    juce::StringArray v;
+                    v.addTokens (ptxt, ",", {});
+                    if (v.size() < 2 || n >= cs::FunctionShape::kMaxPoints)
+                        continue;
+                    f.x[n] = juce::jlimit (0.0f, 1.0f, v[0].getFloatValue());
+                    f.y[n] = juce::jlimit (-1.0f, 1.0f, v[1].getFloatValue());
+                    f.curve[n] = v.size() > 2 ? juce::jlimit (-1.0f, 1.0f, v[2].getFloatValue()) : 0.0f;
+                    ++n;
+                }
+                if (n >= 2)
+                {
+                    f.count = n;
+                    f.sustain = juce::jlimit (-1, n - 1, (int) e.getProperty ("sustain", -1));
+                    f.loopStart = juce::jlimit (0, n - 1, (int) e.getProperty ("loop", 0));
+                }
+            }
+            funcEdit[k] = f;
+        }
+    }
+    setCustomShape (0, getCustomShape (0)); // publish all three
+    for (int m = 0; m < 4; ++m)
+        macroNames[m] = tree.getProperty ("macroName" + juce::String (m + 1), "Macro " + juce::String (m + 1)).toString();
+
+    if (kind != LoadKind::Preset)
+    {
+        for (auto& c : ccMap)
+            c.store (-1);
+        for (const auto& e : tree.getChildWithName ("MIDIMAP"))
+        {
+            const int cc = e["cc"];
+            const int idx = paramIndex (e["param"].toString());
+            if (cc >= 0 && cc < 128 && idx >= 0)
+                ccMap[cc].store (idx);
+        }
+    }
+    else
+    {
+        // Presets never carry MIDI mappings: keep the current ones.
+        tree.removeChild (tree.getChildWithName ("MIDIMAP"), nullptr);
+        tree.appendChild (createStateTree().getChildWithName ("MIDIMAP").createCopy(), nullptr);
+    }
+
+    if (kind != LoadKind::Undo || tree.hasProperty ("presetName"))
+    {
+        currentPreset = tree.getProperty ("presetName", currentPreset).toString();
+        currentCategory = tree.getProperty ("presetCategory", currentCategory).toString();
+        modified = kind == LoadKind::Preset ? false : (bool) tree.getProperty ("presetModified", false);
+    }
+
+    apvts.replaceState (tree);
+    setRoutes (routes);
+    setPattern (pattern);
+    refreshContent();
+    // Loaded effect types keep their saved settings (no defaults applied).
+    {
+        const juce::ScopedLock fxScope (fxLock);
+        readFxTypes (lastFxType);
+        fxHost.sync (lastFxType, (float) currentRate, synth.getRenderEpoch()); // resolve now so an offline bounce starts with the right sound
+    }
+    ++editCounter;
+}
+
+void ChurchSynthProcessor::getStateInformation (juce::MemoryBlock& destData)
+{
+    if (auto xml = createStateTree().createXml())
         copyXmlToBinary (*xml, destData);
 }
 
@@ -593,22 +996,8 @@ void ChurchSynthProcessor::setStateInformation (const void* data, int sizeInByte
     if (auto xml = getXmlFromBinary (data, sizeInBytes))
         if (xml->hasTagName (apvts.state.getType()))
         {
-            const auto tree = juce::ValueTree::fromXml (*xml);
-            {
-                const juce::ScopedLock sl (contentLock);
-                for (int slot = 0; slot < NumContentSlots; ++slot)
-                    userFile[slot] = tree.getProperty (kSlotStateKey[slot]).toString();
-            }
-            const auto routes = routesFromTree (tree.getChildWithName ("ROUTES"));
-            const auto pattern = patternFromTree (tree.getChildWithName ("SEQ"));
-            apvts.replaceState (tree);
-            setRoutes (routes);
-            setPattern (pattern);
-            refreshContent();
-            // Loaded effect types keep their saved settings (no defaults applied).
-            const juce::ScopedLock fxScope (fxLock);
-            readFxTypes (lastFxType);
-            fxHost.sync (lastFxType, (float) currentRate, synth.getRenderEpoch()); // resolve now so an offline bounce starts with the right sound
+            restoreStateTree (juce::ValueTree::fromXml (*xml), LoadKind::HostState);
+            resetHistory ("Load");
         }
 }
 

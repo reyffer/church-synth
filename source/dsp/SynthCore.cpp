@@ -574,6 +574,22 @@ void SynthCore::renderChunk (float* outL, float* outR, int n) noexcept
         outR[i] *= g;
     }
     renderEpoch.fetch_add (1, std::memory_order_acq_rel);
+
+    if (uiActive.load (std::memory_order_relaxed))
+    {
+        int active = 0;
+        for (const auto& v : voices)
+            active += v.isActive() ? 1 : 0;
+        uiVoices.store (active, std::memory_order_relaxed);
+        // Per-voice sources show the newest voice (0 when nothing plays).
+        const bool anyVoice = voices[lastStarted].isActive();
+        for (int s2 = 0; s2 < NumModSources; ++s2)
+        {
+            const bool generator = s2 >= SrcLfo1 && s2 <= SrcComb3;
+            float v = (anyVoice || isGlobalSource (s2) || generator) ? globalSourceValue (s2) : 0.0f;
+            uiSource[s2].store (std::isfinite (v) ? v : 0.0f, std::memory_order_relaxed);
+        }
+    }
 }
 
 float SynthCore::globalSourceValue (int s) const noexcept

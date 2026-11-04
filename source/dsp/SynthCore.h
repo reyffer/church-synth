@@ -52,6 +52,11 @@ public:
 
     int activeVoiceCount() const noexcept;
 
+    // Editor telemetry: published after each render while uiActive is set (cheap, lock-free).
+    std::atomic<bool> uiActive { false };
+    std::atomic<float> uiSource[NumModSources] {};
+    std::atomic<int> uiVoices { 0 };
+
     // FX: effect objects are owned by an fx::FxHost (see FxHost.h) bound to this rack.
     fx::FxRack& getFxRack() noexcept { return fxRack; }
     uint64_t getRenderEpoch() const noexcept { return renderEpoch.load (std::memory_order_acquire); }

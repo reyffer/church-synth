@@ -77,10 +77,22 @@ if(CS_BUILD_PLUGIN)
         VST3_CATEGORIES Instrument Synth
         DESCRIPTION "Lean hybrid synth for live worship")
 
-    target_sources(ChurchSynth PRIVATE
+    set(CS_PLUGIN_SOURCES
         source/plugin/Parameters.cpp
         source/plugin/PluginProcessor.cpp
+        source/plugin/PresetManager.cpp
+        source/plugin/FactoryPresets.cpp
         source/plugin/PluginEditor.cpp)
+    file(GLOB CS_UI_SOURCES CONFIGURE_DEPENDS source/plugin/ui/*.cpp)
+    list(APPEND CS_PLUGIN_SOURCES ${CS_UI_SOURCES})
+
+    # Embedded font (Inter, SIL Open Font License: resources/fonts/OFL.txt).
+    juce_add_binary_data(cs_binary_data SOURCES
+        resources/fonts/Inter-400.ttf
+        resources/fonts/Inter-600.ttf)
+    set_target_properties(cs_binary_data PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+    target_sources(ChurchSynth PRIVATE ${CS_PLUGIN_SOURCES})
 
     target_compile_definitions(ChurchSynth PUBLIC
         JUCE_WEB_BROWSER=0
@@ -95,6 +107,7 @@ if(CS_BUILD_PLUGIN)
     target_link_libraries(ChurchSynth
         PRIVATE
             cs_dsp
+            cs_binary_data
             juce::juce_audio_utils
             juce::juce_audio_formats
         PUBLIC
@@ -105,11 +118,7 @@ if(CS_BUILD_PLUGIN)
     if(CS_BUILD_TESTS)
         # Plugin-level state test: a console app compiling the processor sources directly.
         juce_add_console_app(cs_state_test PRODUCT_NAME "cs_state_test")
-        target_sources(cs_state_test PRIVATE
-            tests/state_test.cpp
-            source/plugin/Parameters.cpp
-            source/plugin/PluginProcessor.cpp
-            source/plugin/PluginEditor.cpp)
+        target_sources(cs_state_test PRIVATE tests/state_test.cpp ${CS_PLUGIN_SOURCES})
         target_include_directories(cs_state_test PRIVATE source)
         target_compile_definitions(cs_state_test PRIVATE
             JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
@@ -117,6 +126,7 @@ if(CS_BUILD_PLUGIN)
             "JucePlugin_VersionString=\"test\"")
         target_link_libraries(cs_state_test PRIVATE
             cs_dsp
+            cs_binary_data
             juce::juce_audio_utils
             juce::juce_audio_formats
             juce::juce_recommended_config_flags)

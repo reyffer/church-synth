@@ -1,37 +1,51 @@
 // Plugin-level test: modulation routes and user-file names survive save/restore
 // (MainStage concerts depend on this). Links the plugin's shared code.
 
+#include "plugin/PluginEditor.h"
 #include "plugin/PluginProcessor.h"
+#include "plugin/PresetManager.h"
 
+#include <cmath>
 #include <cstdio>
 
-// Optional: state_test --snapshot <dir> writes a PNG of each editor tab (for checking the layout).
+// Optional: state_test --snapshot <dir> [preset name] writes PNGs of the editor pages (layout check).
 static void snapshotEditor (ChurchSynthProcessor& p, const juce::File& dir)
 {
-    std::unique_ptr<juce::AudioProcessorEditor> ed (p.createEditor());
-    juce::TabbedComponent* tabs = nullptr;
-    for (auto* c : ed->getChildren())
-        if (auto* t = dynamic_cast<juce::TabbedComponent*> (c))
-            tabs = t;
-    if (tabs == nullptr)
+    std::unique_ptr<juce::AudioProcessorEditor> base (p.createEditor());
+    auto* ed = dynamic_cast<ChurchSynthEditor*> (base.get());
+    if (ed == nullptr)
         return;
-    for (int i = 0; i < tabs->getNumTabs(); ++i)
-    {
-        tabs->setCurrentTabIndex (i);
-        if (auto* tc = dynamic_cast<juce::Timer*> (ed.get()))
-            tc->timerCallback(); // let the page refresh once
-        const auto img = ed->createComponentSnapshot (ed->getLocalBounds());
-        juce::FileOutputStream out (dir.getChildFile ("editor_" + tabs->getTabNames()[i].replace ("/", "-") + ".png"));
+    ed->setSize (1280, 800);
+    auto shot = [&] (const juce::String& name) {
+        const auto img = ed->createComponentSnapshot (ed->getLocalBounds(), true, 1.0f);
+        juce::FileOutputStream out (dir.getChildFile ("ui_" + name + ".png"));
         out.setPosition (0);
         out.truncate();
         juce::PNGImageFormat().writeImageToStream (img, out);
-    }
+    };
+    ed->showView (0, 1, 0); shot ("synth_engine1_env");
+    ed->showView (0, 2, 1); shot ("synth_engine2_lfo");
+    ed->showView (0, 3, 2); shot ("synth_utility_func");
+    ed->showView (0, 4, 0); shot ("synth_random");
+    ed->showView (0, 5, 0); shot ("synth_comb");
+    ed->showView (0, 0, 0); shot ("synth_keyboard");
+    ed->showView (1, 1); shot ("fx");
+    ed->showView (2, 1); shot ("seq");
+    ed->showView (3); shot ("browser");
 }
 
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI init;
     int failures = 0;
+
+    if (argc > 1 && juce::String (argv[1]) == "--dump-params")
+    {
+        for (const auto& d : cs::parameterDefs())
+            std::printf ("%s|%s|%d|%g|%g|%g|%s\n", d.id.toRawUTF8(), d.name.toRawUTF8(), (int) d.kind, d.min, d.max, d.def,
+                         d.choices.joinIntoString (";").substring (0, 400).toRawUTF8());
+        return 0;
+    }
 
     auto aPtr = std::make_unique<ChurchSynthProcessor>(); // large object: keep it off the stack
     auto& a = *aPtr;
@@ -117,10 +131,257 @@ int main (int argc, char** argv)
         ++failures;
     }
 
-    if (failures == 0)
-        std::printf ("State tests passed.\n");
-    if (argc > 2 && juce::String (argv[1]) == "--snapshot")
-        snapshotEditor (b, juce::File (argv[2]));
+    // Undo / redo, MIDI learn, user preset round trip and Seq Lock.
+    {
+        auto pPtr = std::make_unique<ChurchSynthProcessor>();
+        auto& p = *pPtr;
+        p.prepareToPlay (48000.0, 512);
+        auto& pm = p.presets();
+        PresetInfo sanctuary;
+        for (const auto& info : pm.all())
+            if (info.name == "Sanctuary Pad")
+                sanctuary = info;
+        pm.load (sanctuary);
+        auto* cutoff = p.apvts.getParameter ("f1_cutoff");
+        const float original = cutoff->getValue();
+        cutoff->setValueNotifyingHost (0.9f);
+        p.checkpoint ("edit cutoff");
+        if (! p.presetModified())
+        {
+            std::printf ("FAIL: edit not flagged as modified\n");
+            ++failures;
+        }
+        p.undo();
+        if (std::abs (cutoff->getValue() - original) > 1.0e-4f)
+        {
+            std::printf ("FAIL: undo didn't restore the cutoff\n");
+            ++failures;
+        }
+        p.redo();
+        if (std::abs (cutoff->getValue() - 0.9f) > 1.0e-4f)
+        {
+            std::printf ("FAIL: redo didn't re-apply the cutoff\n");
+            ++failures;
+        }
 
+        // MIDI learn: CC 74 drives the cutoff.
+        p.startMidiLearn ("f1_cutoff");
+        {
+            juce::AudioBuffer<float> buf (2, 512);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::controllerEvent (1, 74, 64), 0);
+            p.processBlock (buf, midi);
+        }
+        if (p.ccForParam ("f1_cutoff") != 74 || std::abs (cutoff->getValue() - 64.0f / 127.0f) > 1.0e-3f)
+        {
+            std::printf ("FAIL: MIDI learn (cc %d, value %.3f)\n", p.ccForParam ("f1_cutoff"), cutoff->getValue());
+            ++failures;
+        }
+        // Mappings survive the host state but are not part of presets.
+        {
+            juce::MemoryBlock st;
+            p.getStateInformation (st);
+            auto qPtr = std::make_unique<ChurchSynthProcessor>();
+            qPtr->setStateInformation (st.getData(), (int) st.getSize());
+            if (qPtr->ccForParam ("f1_cutoff") != 74)
+            {
+                std::printf ("FAIL: MIDI mapping not restored with the host state\n");
+                ++failures;
+            }
+        }
+
+        // User preset round trip.
+        juce::String err;
+        const juce::String testName = "zz Church Synth test preset";
+        cutoff->setValueNotifyingHost (0.42f);
+        if (! pm.save (testName, "Pad", "test", "round trip", err))
+        {
+            std::printf ("FAIL: save preset: %s\n", err.toRawUTF8());
+            ++failures;
+        }
+        pm.load (sanctuary);
+        PresetInfo saved;
+        for (const auto& info : pm.all())
+            if (info.name == testName && ! info.factory)
+                saved = info;
+        if (saved.name != testName || ! pm.load (saved) || std::abs (cutoff->getValue() - 0.42f) > 1.0e-3f || p.presetName() != testName)
+        {
+            std::printf ("FAIL: user preset round trip\n");
+            ++failures;
+        }
+        pm.remove (saved);
+
+        // Seq Lock keeps the pattern across preset loads.
+        auto pat = p.getPattern();
+        pat.steps[2].pitch = 9;
+        p.setPattern (pat);
+        p.apvts.getParameter ("seq_lock")->setValueNotifyingHost (1.0f);
+        pm.load (sanctuary);
+        if (p.getPattern().steps[2].pitch != 9)
+        {
+            std::printf ("FAIL: Seq Lock didn't keep the pattern\n");
+            ++failures;
+        }
+        p.apvts.getParameter ("seq_lock")->setValueNotifyingHost (0.0f);
+        pm.load (sanctuary);
+        if (p.getPattern().steps[2].pitch == 9)
+        {
+            std::printf ("FAIL: preset pattern not loaded with Lock off\n");
+            ++failures;
+        }
+
+        // Custom function shape survives the state.
+        auto shape = cs::functionPreset (5);
+        shape.y[1] = 0.33f;
+        p.setCustomShape (1, shape);
+        juce::MemoryBlock st;
+        p.getStateInformation (st);
+        auto qPtr = std::make_unique<ChurchSynthProcessor>();
+        qPtr->setStateInformation (st.getData(), (int) st.getSize());
+        if (std::abs (qPtr->getCustomShape (1).y[1] - 0.33f) > 1.0e-3f)
+        {
+            std::printf ("FAIL: custom function shape not restored\n");
+            ++failures;
+        }
+    }
+
+    // --render-presets <dir>: one WAV per factory preset (audition reel).
+    if (argc > 2 && juce::String (argv[1]) == "--render-presets")
+    {
+        auto pPtr = std::make_unique<ChurchSynthProcessor>();
+        auto& p = *pPtr;
+        const juce::File dir (argv[2]);
+        dir.createDirectory();
+        int index = 0;
+        for (const auto& info : p.presets().all())
+        {
+            if (! info.factory)
+                continue;
+            p.presets().load (info);
+            p.syncEffects();
+            p.prepareToPlay (48000.0, 512);
+            const bool melodic = info.category == "Lead" || info.category == "Bass";
+            const double seconds = 6.5;
+            juce::AudioBuffer<float> out (2, (int) (48000.0 * seconds));
+            juce::AudioBuffer<float> buf (2, 512);
+            for (int pos = 0; pos + 512 <= out.getNumSamples(); pos += 512)
+            {
+                juce::MidiBuffer midi;
+                const double t = pos / 48000.0;
+                auto at = [&] (double when) { return t <= when && when < t + 512 / 48000.0; };
+                if (melodic)
+                {
+                    const int notes[4] = { 60, 64, 67, 72 };
+                    for (int k = 0; k < 4; ++k)
+                    {
+                        const int n = notes[k] - (info.category == "Bass" ? 24 : 0);
+                        if (at (0.05 + k * 0.9)) midi.addEvent (juce::MidiMessage::noteOn (1, n, (juce::uint8) 100), 0);
+                        if (at (0.05 + k * 0.9 + (k == 3 ? 1.6 : 0.95))) midi.addEvent (juce::MidiMessage::noteOff (1, n), 0);
+                    }
+                }
+                else
+                {
+                    for (int n : { 48, 60, 64, 67 })
+                    {
+                        if (at (0.05)) midi.addEvent (juce::MidiMessage::noteOn (1, n, (juce::uint8) 100), 0);
+                        if (at (4.5)) midi.addEvent (juce::MidiMessage::noteOff (1, n), 0);
+                    }
+                }
+                buf.clear();
+                p.processBlock (buf, midi);
+                for (int ch = 0; ch < 2; ++ch)
+                    out.copyFrom (ch, pos, buf, ch, 0, 512);
+            }
+            // fade the last 0.3 s
+            out.applyGainRamp (out.getNumSamples() - 14400, 14400, 1.0f, 0.0f);
+            const auto f = dir.getChildFile (juce::String (index++).paddedLeft ('0', 2) + " " + info.name + ".wav");
+            f.deleteFile();
+            if (auto os = std::unique_ptr<juce::OutputStream> (f.createOutputStream()))
+            {
+                juce::WavAudioFormat wav;
+                JUCE_BEGIN_IGNORE_DEPRECATION_WARNINGS
+                auto w = std::unique_ptr<juce::AudioFormatWriter> (wav.createWriterFor (os.get(), 48000.0, 2, 24, {}, 0));
+                JUCE_END_IGNORE_DEPRECATION_WARNINGS
+                if (w != nullptr)
+                {
+                    os.release();
+                    w->writeFromAudioSampleBuffer (out, 0, out.getNumSamples());
+                }
+            }
+        }
+        return 0;
+    }
+
+    // Every factory preset loads, keeps its routes and plays cleanly (no NaN, no clipping, audible).
+    {
+        auto pPtr = std::make_unique<ChurchSynthProcessor>();
+        auto& p = *pPtr;
+        p.prepareToPlay (48000.0, 512);
+        const bool report = argc > 1 && juce::String (argv[1]) == "--preset-report";
+        const auto all = p.presets().all();
+        for (const auto& info : all)
+        {
+            if (! info.factory)
+                continue;
+            const auto tree = p.presets().treeFor (info);
+            const int wantRoutes = tree.getChildWithName ("ROUTES").getNumChildren();
+            p.presets().load (info);
+            p.syncEffects();
+            p.prepareToPlay (48000.0, 512); // fresh voices / effects for each preset
+            if (p.getRoutes().count != wantRoutes)
+            {
+                std::printf ("FAIL: preset %s lost routes (%d of %d)\n", info.name.toRawUTF8(), p.getRoutes().count, wantRoutes);
+                ++failures;
+            }
+            juce::AudioBuffer<float> buf (2, 512);
+            double sum2 = 0.0;
+            float peak = 0.0f;
+            bool finite = true;
+            const int blocks = (int) (48000.0 * 6.0 / 512.0);
+            for (int blk = 0; blk < blocks; ++blk)
+            {
+                juce::MidiBuffer midi;
+                if (blk == 2)
+                    for (int n : { 48, 60, 64, 67 })
+                        midi.addEvent (juce::MidiMessage::noteOn (1, n, (juce::uint8) 100), 0);
+                if (blk == (int) (48000.0 * 4.0 / 512.0))
+                    for (int n : { 48, 60, 64, 67 })
+                        midi.addEvent (juce::MidiMessage::noteOff (1, n), 0);
+                buf.clear();
+                p.processBlock (buf, midi);
+                for (int ch = 0; ch < 2; ++ch)
+                    for (int i = 0; i < 512; ++i)
+                    {
+                        const float v = buf.getSample (ch, i);
+                        finite = finite && std::isfinite (v);
+                        peak = std::max (peak, std::abs (v));
+                        sum2 += (double) v * v;
+                    }
+            }
+            const double rmsDb = 10.0 * std::log10 (sum2 / (blocks * 512.0 * 2.0) + 1.0e-12);
+            const double peakDb = 20.0 * std::log10 (peak + 1.0e-9);
+            if (report)
+                std::printf ("%-24s %-14s peak %6.1f dBFS  rms %6.1f dB\n", info.name.toRawUTF8(), info.category.toRawUTF8(), peakDb, rmsDb);
+            if (! finite || peak > 1.0f || rmsDb < -50.0)
+            {
+                std::printf ("FAIL: preset %s plays badly (finite %d, peak %.1f dB, rms %.1f dB)\n", info.name.toRawUTF8(), (int) finite, peakDb, rmsDb);
+                ++failures;
+            }
+        }
+        if (report)
+            return failures == 0 ? 0 : 1;
+    }
+
+    if (argc > 2 && juce::String (argv[1]) == "--snapshot")
+    {
+        if (argc > 3)
+            for (const auto& pi : b.presets().all())
+                if (pi.name == juce::String (argv[3]))
+                    b.presets().load (pi);
+        b.syncEffects();
+        snapshotEditor (b, juce::File (argv[2]));
+    }
+
+    std::printf (failures == 0 ? "State tests passed.\n" : "State tests FAILED (%d).\n", failures);
     return failures == 0 ? 0 : 1;
 }

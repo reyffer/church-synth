@@ -68,6 +68,13 @@ juce::StringArray presetNames (bool remap)
     return a;
 }
 
+juce::StringArray functionShapeNames()
+{
+    auto a = presetNames (false);
+    a.add ("Custom"); // index kNumFunctionPresets: the shape drawn in the editor
+    return a;
+}
+
 juce::StringArray factoryNames (bool wavetables)
 {
     auto& lib = ContentLibrary::get();
@@ -307,8 +314,10 @@ void addModulation (Builder& b)
     for (size_t k = 0; k < (size_t) kNumFuncs; ++k)
     {
         const juce::String p = "func" + juce::String ((int) k + 1), n = "Function " + juce::String ((int) k + 1);
-        b.choice (p + "_shape", n + " Shape", presetNames (false), (int) k == 0 ? 2 : (int) k == 1 ? 6 : 13,
-                  [k] (SynthParams& s, float v) { s.func[k].shape = &functionPreset (asInt (v)); });
+        // The last entry, "Custom", is the drawn shape kept in the plugin state (set by the processor).
+        b.choice (p + "_shape", n + " Shape", functionShapeNames(),
+                  (int) k == 0 ? 2 : (int) k == 1 ? 6 : 13,
+                  [k] (SynthParams& s, float v) { s.func[k].shape = &functionPreset (std::min (asInt (v), kNumFunctionPresets - 1)); });
         addRate (b, p, n, 1.0f, 3, [k] (SynthParams& s) -> RateParams& { return s.func[k].rate; });
         b.choice (p + "_mode", n + " Mode", kFuncModes, FuncLoop, [k] (SynthParams& s, float v) { s.func[k].mode = asInt (v); });
         b.choice (p + "_retrig", n + " Retrig Source", kRetrigNames, RetrigPolyKbd, [k] (SynthParams& s, float v) { s.func[k].retrig = asInt (v); });

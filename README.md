@@ -2,7 +2,17 @@
 
 A lean, reliable hybrid synth for live worship, built to run several instances in MainStage on an M1 MacBook Pro. Its architecture is modelled on Arturia Pigments (2 engines + utility, 2 filters, deep modulation, 3 FX buses, seq/arp), cut down to what we actually use. The full feature list is in [SPEC.md](SPEC.md).
 
-**Status: Milestone 6.** Two engine slots (Analog or Wavetable, with cross-mod), Utility engine, 40 generated wavetables and 34 noises, user WAV import, 2 filters with 15 models each (Classic, Cluster, Phaser, Formant, Surgeon, LoFi, Comb, Drive, Allpass, Ladder, Sallen-Key, OTA 4-Pole, SVF Morph, Multimode, Lowpass Gate) with audio-rate filter FM and Sum/Split output, amp envelope, and the full modulation system: Env 2/3, 3 LFOs, 3 Functions, 3 Random generators, 3 Combinators, 4 Macros, a 64-route matrix with sidechains, aftertouch and tempo sync, plus the FX section: buses A and B (3 slots each, serial or parallel), an Aux send bus (3 slots) and 19 effects (Delay, Tape Echo, Pitch Shift Delay, Reverb, Shimmer, Compressor, Multiband, Multi Filter, Param EQ, Distortion, Bitcrusher, Erode, Super Unison, Chorus, Vintage Chorus, Flanger, Vintage Flanger, Phaser, Panner). A 16-step sequencer / arpeggiator (6 tracks with polymetry, probability, slide, scales, random with Regen/Auto-Regen, host sync and Hold latch) completes the sound engine. The editor is temporary (tabs: Sound, Modulation, FX, Seq/Arp, Files); the Pigments-style UI comes in Milestone 7.
+**Status: Milestone 7 (all planned milestones done).** Two engine slots (Analog or Wavetable, with cross-mod), Utility engine, 40 generated wavetables and 34 noises, user WAV import, 2 filters with 15 models each, the full modulation system (Env 2/3, 3 LFOs, 3 drawable Functions, 3 Random generators, 3 Combinators, 4 Macros, a 64-route matrix with sidechains), the FX section (buses A, B and Aux, 19 effects), a 16-step sequencer / arpeggiator, and a Pigments-style editor with a preset browser, 42 factory presets aimed at worship, undo/redo, MIDI learn and drag-and-drop modulation.
+
+## Using it
+
+- **Top bar:** menu, preset name (click for the browser), favourite, save, previous / next preset, the SYNTH / FX / SEQ pages, Seq power and master volume with an output meter.
+- **Modulation:** click a source in the coloured strip (LFO 1, Env 2, M 1...) and drag any knob to set how much it moves that knob; double-click a knob to remove that source from it. You can also drag a source tile onto a knob. Coloured rings show what is modulating each knob. **Mod routes** in the footer lists everything (and sidechains).
+- **Macros:** 4 big knobs bottom right. Double-click a macro's name to rename it. Factory presets use M1 Brightness, M2 Space, M3 Motion, M4 Swell.
+- **MIDI learn:** right-click any knob or button, choose MIDI learn, move a controller. Mappings are saved with the MainStage patch (not in presets).
+- **Undo / redo:** footer buttons, History menu, or Cmd+Z / Cmd+Shift+Z.
+- **Presets:** saved as `.csp` files in `Documents/Church Synth/Presets` (copy that folder between Mac and PC). Sequencer patterns and FX presets live next to them.
+- **Window size:** drag the corner, or menu > Window size.
 
 ## Getting a build
 
@@ -30,7 +40,7 @@ Download and unzip `ChurchSynth-VST3-windows.zip`, then copy **Church Synth.vst3
 
 ## Your own wavetables and noises
 
-In the editor, use **Load file...** next to an engine's wavetable or a noise slot. The file is copied to `Documents/Church Synth/Wavetables` or `.../Noises`, and the patch remembers it by file name. Copy that folder to another computer and the same patches load there too.
+In the editor, open an engine's wavetable menu (or a noise menu on the Utility tab) and choose **Load your own...**. The file is copied to `Documents/Church Synth/Wavetables` or `.../Noises`, and the patch remembers it by file name. Copy that folder to another computer and the same patches load there too.
 
 - Wavetables: WAV/AIFF/FLAC, one single cycle per 2048 samples, up to 256 frames (the usual wavetable format; longer files are sliced into frames).
 - Noises: any sample up to 20 s, mono or stereo.
@@ -52,7 +62,8 @@ ctest --test-dir build          # DSP tests
 
 ```
 source/dsp/      DSP core: plain C++, no JUCE (oscillators, filters, envelopes, voices)
-source/plugin/   JUCE plugin wrapper: parameters, processor, editor
+source/plugin/   JUCE plugin: parameters, processor, presets (FactoryPresets.cpp), editor (ui/)
+resources/       Embedded font (Inter, SIL Open Font License)
 tests/           DSP tests, CPU benchmark, reference patches
 SPEC.md          Feature spec and decisions log
 ```
