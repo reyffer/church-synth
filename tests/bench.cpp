@@ -66,7 +66,7 @@ int main (int argc, char** argv)
           { 36, 43, 48, 52, 55, 59, 60, 62, 64, 67, 69, 71, 72, 74, 76, 79 } },
     };
 
-    std::printf ("%-26s %10s %12s\n", "patch", "us/block", "% one core");
+    std::printf ("%-26s %10s %12s   (best of 3)\n", "patch", "us/block", "% one core");
     for (const auto& c : cases)
     {
         SynthCore s;
@@ -78,18 +78,22 @@ int main (int argc, char** argv)
         const int frames = (int) (seconds * sr);
         std::vector<float> l ((size_t) frames), r ((size_t) frames);
 
-        for (int n : c.notes)
-            s.noteOn (n, 0.85f);
-
-        // Warm up (caches, attack), then time the sustained part.
-        s.render (l.data(), r.data(), sr / 2);
-
-        const auto t0 = std::chrono::steady_clock::now();
-        for (int pos = 0; pos < frames; pos += block)
-            s.render (l.data() + pos, r.data() + pos, std::min (block, frames - pos));
-        const auto t1 = std::chrono::steady_clock::now();
-
-        const double secs = std::chrono::duration<double> (t1 - t0).count();
+        // Best of 3 runs: shared CI machines are noisy, the minimum is the honest cost.
+        double secs = 1.0e9;
+        for (int run = 0; run < 3; ++run)
+        {
+            s.reset();
+            s.setRouting (c.routing);
+            for (int n : c.notes)
+                s.noteOn (n, 0.85f);
+            // Warm up (caches, attack), then time the sustained part.
+            s.render (l.data(), r.data(), sr / 2);
+            const auto t0 = std::chrono::steady_clock::now();
+            for (int pos = 0; pos < frames; pos += block)
+                s.render (l.data() + pos, r.data() + pos, std::min (block, frames - pos));
+            const auto t1 = std::chrono::steady_clock::now();
+            secs = std::min (secs, std::chrono::duration<double> (t1 - t0).count());
+        }
         const double usPerBlock = secs * 1.0e6 / (double) (frames / block);
         std::printf ("%-26s %10.1f %11.2f%%\n", c.name, usPerBlock, 100.0 * secs / seconds);
 
