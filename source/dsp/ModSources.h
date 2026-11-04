@@ -30,6 +30,7 @@ struct Transport
     double bpm = 120.0;
     double ppq = 0.0;     // quarter notes at the start of the current block
     bool playing = false; // host transport running (sync to song position)
+    bool hostTempo = true; // false: no tempo from the host (standalone) -> use the seq's own BPM
 };
 
 inline float rateToHz (const RateParams& r, const Transport& t) noexcept

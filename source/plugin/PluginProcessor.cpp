@@ -367,6 +367,125 @@ cs::ModRouting ChurchSynthProcessor::routesFromTree (const juce::ValueTree& t)
     return r;
 }
 
+// --- Seq pattern --------------------------------------------------------------
+cs::SeqPattern ChurchSynthProcessor::getPattern() const
+{
+    const juce::ScopedLock sl (patternLock);
+    return patternEdit;
+}
+
+void ChurchSynthProcessor::setPattern (const cs::SeqPattern& p)
+{
+    const juce::ScopedLock sl (patternLock);
+    patternEdit = p;
+    patternSeq.fetch_add (1, std::memory_order_acq_rel); // odd: writing
+    std::atomic_thread_fence (std::memory_order_release);
+    patternShared = p;
+    std::atomic_thread_fence (std::memory_order_release);
+    patternSeq.fetch_add (1, std::memory_order_acq_rel); // even: stable
+}
+
+void ChurchSynthProcessor::pullPattern() noexcept
+{
+    const uint32_t s1 = patternSeq.load (std::memory_order_acquire);
+    if (s1 == patternSeqSeen || (s1 & 1u) != 0)
+        return;
+    patternAudio = patternShared;
+    std::atomic_thread_fence (std::memory_order_acquire);
+    if (patternSeq.load (std::memory_order_acquire) != s1)
+        return;
+    synth.setSeqPattern (patternAudio);
+    patternSeqSeen = s1;
+}
+
+cs::SeqParams ChurchSynthProcessor::currentSeqParams() const
+{
+    cs::SynthParams sp;
+    for (size_t i = 0; i < rawParams.size(); ++i)
+    {
+        const auto& def = cs::parameterDefs()[i];
+        if (def.id.startsWith ("seq_"))
+            def.apply (sp, rawParams[i]->load());
+    }
+    return sp.seq;
+}
+
+// Pattern state: one STEP per column, one TRACK per track (attributes, so new
+// fields can be added later with defaults).
+juce::ValueTree ChurchSynthProcessor::patternToTree (const cs::SeqPattern& p)
+{
+    juce::ValueTree t ("SEQ");
+    t.setProperty ("seed", (int) p.seed, nullptr);
+    juce::String w;
+    for (float x : p.customWeights)
+        w << juce::String (x, 3) << " ";
+    t.setProperty ("weights", w.trim(), nullptr);
+    for (const auto& st : p.steps)
+    {
+        juce::ValueTree e ("STEP");
+        e.setProperty ("on", st.on, nullptr);
+        e.setProperty ("prob", st.prob, nullptr);
+        e.setProperty ("pitch", st.pitch, nullptr);
+        e.setProperty ("vel", st.velocity, nullptr);
+        e.setProperty ("oct", st.octave, nullptr);
+        e.setProperty ("gate", st.gate, nullptr);
+        e.setProperty ("slide", st.slide, nullptr);
+        e.setProperty ("lock", (int) st.lockSeed, nullptr);
+        t.appendChild (e, nullptr);
+    }
+    for (int i = 0; i < cs::NumSeqTracks; ++i)
+    {
+        const auto& tr = p.tracks[(size_t) i];
+        juce::ValueTree e ("TRACK");
+        e.setProperty ("name", cs::kSeqTrackNames[i], nullptr);
+        e.setProperty ("on", tr.enabled, nullptr);
+        e.setProperty ("len", tr.length, nullptr);
+        e.setProperty ("div", tr.divider, nullptr);
+        e.setProperty ("rnd", tr.random, nullptr);
+        t.appendChild (e, nullptr);
+    }
+    return t;
+}
+
+cs::SeqPattern ChurchSynthProcessor::patternFromTree (const juce::ValueTree& t)
+{
+    cs::SeqPattern p;
+    if (! t.isValid())
+        return p;
+    p.seed = (uint32_t) (int) t.getProperty ("seed", 1);
+    if (p.seed == 0)
+        p.seed = 1;
+    juce::StringArray w;
+    w.addTokens (t.getProperty ("weights").toString(), " ", {});
+    for (int i = 0; i < 12 && i < w.size(); ++i)
+        p.customWeights[(size_t) i] = juce::jlimit (0.0f, 10.0f, w[i].getFloatValue());
+    int si = 0, ti = 0;
+    for (const auto& e : t)
+    {
+        if (e.hasType ("STEP") && si < cs::kSeqSteps)
+        {
+            auto& st = p.steps[(size_t) si++];
+            st.on = e.getProperty ("on", true);
+            st.prob = juce::jlimit (0.0f, 1.0f, (float) e.getProperty ("prob", 1.0f));
+            st.pitch = juce::jlimit (0, 12, (int) e.getProperty ("pitch", 0));
+            st.velocity = juce::jlimit (0.0f, 1.0f, (float) e.getProperty ("vel", 0.8f));
+            st.octave = juce::jlimit (-2, 2, (int) e.getProperty ("oct", 0));
+            st.gate = juce::jlimit (0.05f, 4.0f, (float) e.getProperty ("gate", 0.5f));
+            st.slide = juce::jlimit (0.0f, 1.0f, (float) e.getProperty ("slide", 0.0f));
+            st.lockSeed = (uint32_t) (int) e.getProperty ("lock", 0);
+        }
+        else if (e.hasType ("TRACK") && ti < cs::NumSeqTracks)
+        {
+            auto& tr = p.tracks[(size_t) ti++];
+            tr.enabled = e.getProperty ("on", true);
+            tr.length = juce::jlimit (1, cs::kSeqSteps, (int) e.getProperty ("len", cs::kSeqSteps));
+            tr.divider = juce::jlimit (1, 16, (int) e.getProperty ("div", 1));
+            tr.random = juce::jlimit (0.0f, 1.0f, (float) e.getProperty ("rnd", 0.0f));
+        }
+    }
+    return p;
+}
+
 // ---------------------------------------------------------------------------
 void ChurchSynthProcessor::handleMidi (const juce::MidiMessage& m) noexcept
 {
@@ -397,16 +516,20 @@ void ChurchSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
     juce::ScopedNoDenormals noDenormals;
     pullParameters();
     pullRoutes();
+    pullPattern();
 
+    cs::Transport t;
+    t.hostTempo = false; // no tempo from the host (standalone): the synth uses its own
+    t.playing = false;
     if (auto* ph = getPlayHead())
         if (const auto pos = ph->getPosition())
         {
-            cs::Transport t;
+            t.hostTempo = pos->getBpm().hasValue();
             t.bpm = pos->getBpm().orFallback (120.0);
             t.ppq = pos->getPpqPosition().orFallback (0.0);
             t.playing = pos->getIsPlaying() && pos->getPpqPosition().hasValue();
-            synth.setTransport (t);
         }
+    synth.setTransport (t);
 
     const int numSamples = buffer.getNumSamples();
     float* left = buffer.getWritePointer (0);
@@ -450,6 +573,13 @@ void ChurchSynthProcessor::getStateInformation (juce::MemoryBlock& destData)
         state.appendChild (routesToTree (routesEdit), nullptr);
     }
     {
+        // Save the seed that is playing now (Auto Regen may have moved it on).
+        auto pat = getPattern();
+        pat.seed = synth.getSeq().uiSeed.load (std::memory_order_relaxed);
+        state.removeChild (state.getChildWithName ("SEQ"), nullptr);
+        state.appendChild (patternToTree (pat), nullptr);
+    }
+    {
         const juce::ScopedLock sl (contentLock);
         for (int slot = 0; slot < NumContentSlots; ++slot)
             state.setProperty (kSlotStateKey[slot], userFile[slot], nullptr);
@@ -470,8 +600,10 @@ void ChurchSynthProcessor::setStateInformation (const void* data, int sizeInByte
                     userFile[slot] = tree.getProperty (kSlotStateKey[slot]).toString();
             }
             const auto routes = routesFromTree (tree.getChildWithName ("ROUTES"));
+            const auto pattern = patternFromTree (tree.getChildWithName ("SEQ"));
             apvts.replaceState (tree);
             setRoutes (routes);
+            setPattern (pattern);
             refreshContent();
             // Loaded effect types keep their saved settings (no defaults applied).
             const juce::ScopedLock fxScope (fxLock);

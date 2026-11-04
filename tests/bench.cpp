@@ -57,6 +57,16 @@ static Case padWithFx (const std::vector<int>& notes)
     return c;
 }
 
+static Case arpWithFx (const std::vector<int>& notes)
+{
+    Case c { "arp_16ths_fx", patches::supersaw(), notes };
+    c.params.seq.on = true;
+    c.params.seq.mode = SeqModeArp;
+    c.params.seq.arpOctaves = 2;
+    setupFx (c, { fx::FxDelay, 0, 0, 0, 0, 0, fx::FxReverb, 0, 0 }, 0.4f);
+    return c;
+}
+
 static Case allFxSlots (const std::vector<int>& notes)
 {
     Case c { "pad_fx_all_9_slots", patches::pad(), notes };
@@ -105,6 +115,7 @@ int main (int argc, char** argv)
           { 36, 43, 48, 52, 55, 59, 60, 62, 64, 67, 69, 71, 72, 74, 76, 79 } },
         padWithFx (chord8),
         allFxSlots (chord8),
+        arpWithFx ({ 48, 55, 60, 64 }),
     };
 
     std::printf ("%-26s %10s %12s   (best of 3)\n", "patch", "us/block", "% one core");

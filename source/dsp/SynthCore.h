@@ -3,6 +3,7 @@
 // Top-level synth: voice allocation, MIDI state and block rendering.
 // Real-time safe: no allocation, locks or I/O after setSampleRate().
 
+#include "SeqArp.h"
 #include "Voice.h"
 #include "fx/FxRack.h"
 
@@ -18,8 +19,13 @@ public:
     void setSampleRate (float sr) noexcept;
     void reset() noexcept;
 
+    // Keyboard input. With the Seq/Arp on, keys go to it and it plays the voices.
     void noteOn (int note, float velocity) noexcept;  // velocity 0..1
     void noteOff (int note) noexcept;
+
+    // Sequencer pattern (copy; cheap) and live state for the editor.
+    void setSeqPattern (const SeqPattern& p) noexcept { seq.setPattern (p); }
+    const SeqArp& getSeq() const noexcept { return seq; }
     void setSustain (bool down) noexcept;
     void setPitchBend (float normalised) noexcept { bend = std::clamp (normalised, -1.0f, 1.0f); } // -1..1
     void setModWheel (float v) noexcept { modWheel = v; }
@@ -41,7 +47,7 @@ public:
     float voiceSourceValue (int voice, int source) const noexcept { return voices[std::clamp (voice, 0, kMaxVoices - 1)].sourceValue (source); }
     void allNotesOff() noexcept;
 
-    // Renders n samples into outL/outR (overwrites). All buses are summed (until the FX stage).
+    // Renders n samples into outL/outR (overwrites): voices -> FX -> master.
     void render (float* outL, float* outR, int n) noexcept;
 
     int activeVoiceCount() const noexcept;
@@ -83,7 +89,26 @@ private:
     std::atomic<uint64_t> renderEpoch { 0 };
     SynthParams fxScratch; // params with global (FX) modulation applied
     float globalSourceValue (int s) const noexcept;
-    const fx::FxParams& modulatedFxParams() noexcept;
+    const SynthParams& modulatedGlobalParams() noexcept; // params + routes to global destinations (FX, Seq)
+    const SynthParams* gParams = &params;
+
+    // Sequencer / arpeggiator.
+    struct SeqSink final : SeqArp::Sink
+    {
+        SynthCore& core;
+        explicit SeqSink (SynthCore& c) : core (c) {}
+        void seqNoteOn (int note, float velocity, int slideFrom, float slideSeconds) noexcept override;
+        void seqNoteOff (int note) noexcept override;
+    };
+    SeqArp seq;
+    SeqSink seqSink { *this };
+    bool seqWasOn = false, holdWas = false;
+    bool keyDown[128] {};
+    float keyVel[128] {};
+    bool chordArp = false;
+    void updateSeqState() noexcept;
+    void playNoteOn (int note, float velocity, bool fromSeq) noexcept;
+    void playNoteOff (int note, bool ignoreSustain) noexcept;
     float bus[NumVoiceBuses][2][kMaxChunk] {};
 
     // Mono note stack (most recent last).
@@ -97,7 +122,7 @@ private:
     uint32_t nextSeed() noexcept { return seedCounter += 0x6D2B79F5u; }
 
     void monoNoteOn (int note, float vel) noexcept;
-    void monoNoteOff (int note) noexcept;
+    void monoNoteOffFallback() noexcept;
     void polyNoteOn (int note, float vel) noexcept;
     int findVoiceToSteal (int limit) const noexcept;
     void pushHeld (int note, float vel) noexcept;

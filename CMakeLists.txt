@@ -21,6 +21,7 @@ add_library(cs_dsp STATIC
     source/dsp/ContentFactory.cpp
     source/dsp/ModMatrix.cpp
     source/dsp/ModSources.cpp
+    source/dsp/SeqArp.cpp
     source/dsp/fx/Effects.cpp
     source/dsp/fx/FxRack.cpp)
 target_include_directories(cs_dsp PUBLIC source)

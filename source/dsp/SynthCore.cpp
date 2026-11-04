@@ -7,6 +7,7 @@ namespace cs
 void SynthCore::setSampleRate (float sr) noexcept
 {
     sampleRate = sr;
+    seq.setSampleRate (sr);
     for (auto& v : voices)
         v.setSampleRate (sr);
     reset();
@@ -28,6 +29,9 @@ void SynthCore::reset() noexcept
     numHeld = 0;
     sustainPedal = false;
     bend = 0.0f;
+    seq.reset();
+    for (auto& k : keyDown)
+        k = false;
 }
 
 void SynthCore::computeUsedSources() noexcept
@@ -228,6 +232,30 @@ void SynthCore::noteOn (int note, float velocity) noexcept
 {
     note = std::clamp (note, 0, 127);
     velocity = std::clamp (velocity, 0.0f, 1.0f);
+    keyDown[note] = true;
+    keyVel[note] = velocity;
+    if (params.seq.on)
+    {
+        seq.keyDown (note, velocity, params.hold, sustainPedal);
+        return;
+    }
+    playNoteOn (note, velocity, false);
+}
+
+void SynthCore::noteOff (int note) noexcept
+{
+    note = std::clamp (note, 0, 127);
+    keyDown[note] = false;
+    if (params.seq.on)
+    {
+        seq.keyUp (note, params.hold, sustainPedal);
+        return;
+    }
+    playNoteOff (note, false);
+}
+
+void SynthCore::playNoteOn (int note, float velocity, bool fromSeq) noexcept
+{
     ++stamp;
     monoTrigger = true;
     if (numHeld == 0)
@@ -237,29 +265,121 @@ void SynthCore::noteOn (int note, float velocity) noexcept
     else
         polyNoteOn (note, velocity);
     lastPitch = (float) note;
+    // Chord arp: voices the arp starts play single notes (it spreads the chord itself).
+    for (auto& v : voices)
+        if (v.getAge() == stamp)
+            v.singleUnison = fromSeq && chordArp;
 }
 
-void SynthCore::noteOff (int note) noexcept
+void SynthCore::playNoteOff (int note, bool ignoreSustain) noexcept
 {
+    const bool sustain = sustainActive() && ! ignoreSustain;
     if (isMono())
     {
-        monoNoteOff (note);
+        removeHeld (note);
+        auto& v = voices[0];
+        if (! v.isActive() || ! v.isGateOn())
+            return;
+        if (numHeld > 0)
+        {
+            monoNoteOffFallback();
+            return;
+        }
+        if (sustain)
+            v.sustained = true;
+        else
+            v.release();
         return;
     }
     removeHeld (note);
     for (auto& v : voices)
         if (v.isActive() && v.isGateOn() && v.getNote() == note)
         {
-            if (sustainActive())
+            if (sustain)
                 v.sustained = true;
             else
                 v.release();
         }
 }
 
+void SynthCore::SeqSink::seqNoteOn (int note, float velocity, int slideFrom, float slideSeconds) noexcept
+{
+    if (slideFrom >= 0)
+        for (auto& v : core.voices)
+            if (v.isActive() && v.isGateOn() && ! v.isStealing() && v.getNote() == slideFrom)
+            {
+                // Slide: the sounding voice glides to the new note without retriggering.
+                ++core.stamp;
+                core.removeHeld (slideFrom);
+                core.pushHeld (note, velocity);
+                v.retarget (core.params, note, velocity, false, true, core.stamp, slideSeconds);
+                v.singleUnison = core.chordArp;
+                core.lastPitch = (float) note;
+                return;
+            }
+    core.playNoteOn (note, velocity, true);
+}
+
+void SynthCore::SeqSink::seqNoteOff (int note) noexcept
+{
+    core.playNoteOff (note, true);
+}
+
+// Seq/Arp switched on or off, Hold released, chord arp: keep everything consistent.
+void SynthCore::updateSeqState() noexcept
+{
+    const bool on = params.seq.on;
+    if (on != seqWasOn)
+    {
+        if (on)
+        {
+            // Keys already down now drive the sequencer instead of the voices.
+            for (auto& v : voices)
+                if (v.isActive() && v.isGateOn())
+                    v.release();
+            numHeld = 0;
+            for (int n = 0; n < 128; ++n)
+                if (keyDown[n])
+                    seq.keyDown (n, keyVel[n], params.hold, sustainPedal);
+        }
+        else
+        {
+            seq.stop (seqSink);
+            seq.reset();
+            for (int n = 0; n < 128; ++n)
+                if (keyDown[n])
+                    playNoteOn (n, keyVel[n], false);
+        }
+        seqWasOn = on;
+    }
+    if (on && holdWas && ! params.hold)
+        seq.pedalChanged (false, sustainPedal);
+    holdWas = params.hold;
+
+    // Chord arp: an engine in Unison Chord mode gives the arp its chord.
+    chordArp = false;
+    if (on && params.seq.mode == SeqModeArp)
+        for (const auto& e : params.engine)
+            if (e.on && e.unisonOn && e.unisonMode == UnisonChord)
+            {
+                int iv[kMaxUnison];
+                const int count = unison::chordIntervals (e, iv);
+                seq.setChord (iv, count);
+                chordArp = true;
+                break;
+            }
+    if (! chordArp)
+        seq.setChord (nullptr, 0);
+}
+
 void SynthCore::setSustain (bool down) noexcept
 {
     sustainPedal = down;
+    if (params.seq.on)
+    {
+        seq.pedalChanged (params.hold, down); // the pedal latches the sequencer's keys
+        return;
+    }
     if (sustainActive())
         return;
     for (auto& v : voices)
@@ -271,6 +391,9 @@ void SynthCore::setSustain (bool down) noexcept
 
 void SynthCore::allNotesOff() noexcept
 {
+    seq.reset();
+    for (auto& k : keyDown)
+        k = false;
     numHeld = 0;
     for (auto& v : voices)
         if (v.isActive())
@@ -360,37 +483,42 @@ void SynthCore::monoNoteOn (int note, float vel) noexcept
     v.retarget (params, note, vel, ! legato, from >= 0.0f, stamp);
 }
 
-void SynthCore::monoNoteOff (int note) noexcept
+// Mono: a key was released while others are held -> fall back to the most
+// recent one still held (legato, no retrigger).
+void SynthCore::monoNoteOffFallback() noexcept
 {
-    removeHeld (note);
     auto& v = voices[0];
-    if (! v.isActive() || ! v.isGateOn())
-        return;
-
-    if (numHeld > 0)
+    const int prev = heldNotes[numHeld - 1];
+    if (prev != v.getNote())
     {
-        // Fall back to the most recent key still held (legato, no retrigger).
-        const int prev = heldNotes[numHeld - 1];
-        if (prev != v.getNote())
-        {
-            const float from = glideFrom (true);
-            v.retarget (params, prev, heldVel[numHeld - 1], false, from >= 0.0f, stamp);
-            lastPitch = (float) prev;
-        }
-        return;
+        const float from = glideFrom (true);
+        v.retarget (params, prev, heldVel[numHeld - 1], false, from >= 0.0f, stamp);
+        lastPitch = (float) prev;
     }
-    if (sustainActive())
-        v.sustained = true;
-    else
-        v.release();
 }
 
 // ---------------------------------------------------------------------------
 void SynthCore::render (float* outL, float* outR, int n) noexcept
 {
-    // Process in chunks that fit the bus buffers.
-    for (int off = 0; off < n; off += kMaxChunk)
-        renderChunk (outL + off, outR + off, std::min (kMaxChunk, n - off));
+    if (! transport.hostTempo)
+        transport.bpm = std::clamp ((double) params.seq.bpm, 20.0, 400.0); // standalone: our own tempo
+    gParams = &modulatedGlobalParams();
+    updateSeqState();
+
+    if (! params.seq.on && ! seq.busy())
+    {
+        // Process in chunks that fit the bus buffers.
+        for (int off = 0; off < n; off += kMaxChunk)
+            renderChunk (outL + off, outR + off, std::min (kMaxChunk, n - off));
+        return;
+    }
+    // Sequencer: render up to each of its events, then play them.
+    for (int off = 0; off < n;)
+    {
+        const int len = seq.run (std::min (kMaxChunk, n - off), gParams->seq, transport, seqSink);
+        renderChunk (outL + off, outR + off, len);
+        off += len;
+    }
 }
 
 void SynthCore::renderChunk (float* outL, float* outR, int n) noexcept
@@ -438,7 +566,7 @@ void SynthCore::renderChunk (float* outL, float* outR, int n) noexcept
                             bus[BusFxB][0], bus[BusFxB][1], bus[BusDirect][0], bus[BusDirect][1] };
     fx::FxContext ctx;
     ctx.bpm = transport.bpm;
-    fxRack.process (modulatedFxParams(), in, outL, outR, n, ctx);
+    fxRack.process (gParams->fx, in, outL, outR, n, ctx);
     const float g = params.masterVolume;
     for (int i = 0; i < n; ++i)
     {
@@ -465,16 +593,16 @@ float SynthCore::globalSourceValue (int s) const noexcept
     return voices[lastStarted].sourceValue (s);
 }
 
-// FX parameters are global, so routes to them are evaluated once per chunk
-// (per-voice sources follow the most recently played note).
-const fx::FxParams& SynthCore::modulatedFxParams() noexcept
+// FX and Seq parameters are global, so routes to them are evaluated once per
+// render call (per-voice sources follow the most recently played note).
+const SynthParams& SynthCore::modulatedGlobalParams() noexcept
 {
     const auto& dests = modDestinations();
     bool any = false;
     for (int r = 0; r < routing.count && ! any; ++r)
         any = routing.slotOf[r] >= 0 && dests[(size_t) routing.routes[r].dest].global;
     if (! any)
-        return params.fx;
+        return params;
 
     fxScratch = params;
     float add[kMaxRoutes] {};
@@ -497,6 +625,6 @@ const fx::FxParams& SynthCore::modulatedFxParams() noexcept
         float& f = dest.ref (fxScratch);
         f = dest.fromNorm (dest.toNorm (f) + add[i]);
     }
-    return fxScratch.fx;
+    return fxScratch;
 }
 } // namespace cs

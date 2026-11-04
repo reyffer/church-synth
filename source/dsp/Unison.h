@@ -24,23 +24,37 @@ inline float detuneSemis (float d) noexcept
     return 6.0f * d * d * d; // fine control at low settings, +/-6 st at max
 }
 
+inline constexpr int kChords[kNumChords][5] = {
+    { 0, 12, -1, -1, -1 },  // Octave
+    { 0, 7, -1, -1, -1 },   // Fifth
+    { 0, 7, 12, -1, -1 },   // Fifth + octave
+    { 0, 4, 7, -1, -1 },    // Major
+    { 0, 3, 7, -1, -1 },    // Minor
+    { 0, 2, 7, -1, -1 },    // Sus2
+    { 0, 5, 7, -1, -1 },    // Sus4
+    { 0, 4, 7, 11, -1 },    // Major 7
+    { 0, 3, 7, 10, -1 },    // Minor 7
+    { 0, 4, 7, 10, -1 },    // Dominant 7
+    { 0, 4, 7, 14, -1 },    // Add 9
+    { 0, 4, 7, 9, 14 },     // 6/9
+};
+
+// Intervals of the first `count` chord-unison voices (the same notes Chord mode plays).
+inline int chordIntervals (const EngineParams& p, int* out) noexcept
+{
+    const auto& ch = kChords[std::clamp (p.chord, 0, kNumChords - 1)];
+    int len = 0;
+    while (len < 5 && ch[len] >= 0)
+        ++len;
+    const int count = std::clamp (p.unisonVoices, 1, kMaxUnison);
+    for (int u = 0; u < count; ++u)
+        out[u] = ch[u % len] + 12 * (u / len);
+    return count;
+}
+
 inline void layoutUnison (const EngineParams& p, int count,
                           float* offset, float* panL, float* panR) noexcept
 {
-    static constexpr int kChords[kNumChords][5] = {
-        { 0, 12, -1, -1, -1 },  // Octave
-        { 0, 7, -1, -1, -1 },   // Fifth
-        { 0, 7, 12, -1, -1 },   // Fifth + octave
-        { 0, 4, 7, -1, -1 },    // Major
-        { 0, 3, 7, -1, -1 },    // Minor
-        { 0, 2, 7, -1, -1 },    // Sus2
-        { 0, 5, 7, -1, -1 },    // Sus4
-        { 0, 4, 7, 11, -1 },    // Major 7
-        { 0, 3, 7, 10, -1 },    // Minor 7
-        { 0, 4, 7, 10, -1 },    // Dominant 7
-        { 0, 4, 7, 14, -1 },    // Add 9
-        { 0, 4, 7, 9, 14 },     // 6/9
-    };
     static constexpr float kSuperSpread[7] = { -1.0f, -0.62f, -0.29f, 0.0f, 0.31f, 0.65f, 0.97f };
 
     if (count == 1)

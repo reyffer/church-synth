@@ -144,6 +144,10 @@ std::vector<ModDest> build()
     add ("fx_b_vol", "FX Bus B Volume", 0, 1.5f, false, [] (SynthParams& s) -> float& { return s.fx.busVolume[1]; });
     add ("fx_aux_send", "Aux Send", 0, 1, false, [] (SynthParams& s) -> float& { return s.fx.auxSend; });
     add ("fx_aux_return", "Aux Return", 0, 1, false, [] (SynthParams& s) -> float& { return s.fx.auxReturn; });
+    // Sequencer (global).
+    add ("seq_transpose", "Seq Transpose", -24, 24, false, [] (SynthParams& s) -> float& { return s.seq.transpose; });
+    add ("seq_swing", "Seq Swing", 0.5f, 0.75f, false, [] (SynthParams& s) -> float& { return s.seq.swing; });
+    add ("seq_vel_blend", "Seq Velocity Blend", 0, 1, false, [] (SynthParams& s) -> float& { return s.seq.velBlend; });
     for (size_t i = firstFx; i < d.size(); ++i)
         d[i].global = true;
     return d;

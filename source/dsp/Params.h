@@ -300,6 +300,32 @@ struct KeyCurves
     float velocity = 0.0f, aftertouch = 0.0f, keytrack = 0.0f; // -1..1, 0 = linear
 };
 
+// --- Sequencer / arpeggiator settings (the step pattern itself is SeqPattern) ---
+enum SeqMode : int { SeqModeArp = 0, SeqModeSeq, SeqModeCount };
+enum SeqDirection : int { SeqForward = 0, SeqBackward, SeqPingPong, SeqRandomDir, SeqDirectionCount };
+enum ArpOrder : int { ArpAsPlayed = 0, ArpUp, ArpDown, ArpUpDownIncl, ArpUpDownExcl, ArpRandom, ArpOrderCount };
+
+struct SeqParams
+{
+    bool on = false;
+    int mode = SeqModeArp;
+    int rateDiv = 13;          // index into kSyncDivs (1/16)
+    float swing = 0.5f;        // 0.5 (straight) .. 0.75
+    int direction = SeqForward;
+    int length = 16;           // 1..16
+    bool polymetry = false;    // tracks use their own lengths
+    int resetSteps = 0;        // realign tracks every N steps (0 = never)
+    int arpOrder = ArpUp;
+    int arpOctaves = 1;        // 1..4
+    float velBlend = 0.5f;     // 0 = played velocity, 1 = step velocity
+    float transpose = 0.0f;    // semitones (modulatable)
+    int scale = 0;             // index into the scale list
+    bool snap = false;         // snap pitch to the scale
+    int autoRegen = 0;         // 0 = off, else index into the auto-regen lengths
+    float bpm = 120.0f;        // used when the host gives no tempo (standalone)
+    bool lock = false;         // keep the pattern when a preset loads (browser, M7)
+};
+
 struct SynthParams
 {
     std::array<EngineParams, kNumEngines> engine {};
@@ -341,6 +367,9 @@ struct SynthParams
 
     // --- FX section (global, after the voices) ---------------------------------
     fx::FxParams fx {};
+
+    // --- Sequencer / arpeggiator ------------------------------------------------
+    SeqParams seq {};
 
     SynthParams()
     {

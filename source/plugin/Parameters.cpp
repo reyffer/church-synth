@@ -4,6 +4,7 @@
 #include "dsp/ModMatrix.h"
 #include "dsp/ModSources.h"
 #include "dsp/fx/Effects.h"
+#include "dsp/SeqArp.h"
 
 namespace cs
 {
@@ -408,6 +409,44 @@ void addFx (Builder& b)
     }
 }
 
+void addSeq (Builder& b)
+{
+    b.group = "Seq/Arp";
+    auto names = [] (const char* const* list, int n) {
+        juce::StringArray a;
+        for (int i = 0; i < n; ++i)
+            a.add (list[i]);
+        return a;
+    };
+    juce::StringArray rates, scales;
+    for (const auto& d : kSyncDivs)
+        rates.add (d.name);
+    for (const auto& sc : kSeqScales)
+        scales.add (sc.name);
+
+    b.boolean ("seq_on", "Seq/Arp On", false, [] (SynthParams& s, float v) { s.seq.on = asBool (v); });
+    b.choice ("seq_mode", "Seq/Arp Mode", names (kSeqModeNames, SeqModeCount), SeqModeArp,
+              [] (SynthParams& s, float v) { s.seq.mode = asInt (v); });
+    b.choice ("seq_rate", "Seq Rate", rates, 13, [] (SynthParams& s, float v) { s.seq.rateDiv = asInt (v); });
+    b.flt ("seq_swing", "Seq Swing", 0.5f, 0.75f, 0.5f, [] (SynthParams& s, float v) { s.seq.swing = v; });
+    b.choice ("seq_direction", "Seq Direction", names (kSeqDirectionNames, SeqDirectionCount), SeqForward,
+              [] (SynthParams& s, float v) { s.seq.direction = asInt (v); });
+    b.integer ("seq_length", "Seq Length", 1, kSeqSteps, kSeqSteps, [] (SynthParams& s, float v) { s.seq.length = asInt (v); });
+    b.boolean ("seq_polymetry", "Seq Polymetry", false, [] (SynthParams& s, float v) { s.seq.polymetry = asBool (v); });
+    b.integer ("seq_reset", "Seq Reset Steps", 0, 64, 0, [] (SynthParams& s, float v) { s.seq.resetSteps = asInt (v); });
+    b.choice ("seq_arp_order", "Arp Order", names (kArpOrderNames, ArpOrderCount), ArpUp,
+              [] (SynthParams& s, float v) { s.seq.arpOrder = asInt (v); });
+    b.integer ("seq_arp_octaves", "Arp Octaves", 1, 4, 1, [] (SynthParams& s, float v) { s.seq.arpOctaves = asInt (v); });
+    b.flt ("seq_vel_blend", "Seq Velocity Blend", 0, 1, 0.5f, [] (SynthParams& s, float v) { s.seq.velBlend = v; });
+    b.integer ("seq_transpose", "Seq Transpose", -24, 24, 0, [] (SynthParams& s, float v) { s.seq.transpose = (float) asInt (v); });
+    b.choice ("seq_scale", "Seq Scale", scales, 0, [] (SynthParams& s, float v) { s.seq.scale = asInt (v); });
+    b.boolean ("seq_snap", "Seq Snap to Scale", false, [] (SynthParams& s, float v) { s.seq.snap = asBool (v); });
+    b.choice ("seq_autoregen", "Seq Auto Regen", names (kAutoRegenNames, kNumAutoRegen), 0,
+              [] (SynthParams& s, float v) { s.seq.autoRegen = asInt (v); });
+    b.flt ("seq_bpm", "Tempo (no host)", 40, 240, 120, [] (SynthParams& s, float v) { s.seq.bpm = v; }, "BPM");
+    b.boolean ("seq_lock", "Seq Lock Pattern", false, [] (SynthParams& s, float v) { s.seq.lock = asBool (v); });
+}
+
 std::vector<ParamDef> build()
 {
     Builder b;
@@ -454,6 +493,7 @@ std::vector<ParamDef> build()
 
     addModulation (b);
     addFx (b);
+    addSeq (b);
 
     b.group = "Master";
     b.flt ("master_vol", "Master Volume", 0, 1, 0.8f, [] (SynthParams& s, float v) { s.masterVolume = v; });

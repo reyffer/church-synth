@@ -7,6 +7,7 @@
 #include "dsp/ModMatrix.h"
 #include "dsp/ModSources.h"
 #include "dsp/fx/FxHost.h"
+#include "dsp/SeqArp.h"
 
 #include <cmath>
 #include <cstdio>
@@ -1061,8 +1062,437 @@ static void testFxSwapIsSafe()
     CHECK (rig.host.pendingFrees() == 0, "replaced effects are freed after the audio moved on");
 }
 
+
+// --- Milestone 6: Seq / Arp ----------------------------------------------------
+
+struct SeqEvent
+{
+    int64_t time;
+    int note;
+    bool on;
+    int slideFrom;
+};
+
+struct SeqRecorder final : SeqArp::Sink
+{
+    std::vector<SeqEvent> events;
+    int64_t now = 0;
+    void seqNoteOn (int note, float, int slideFrom, float) noexcept override { events.push_back ({ now, note, true, slideFrom }); }
+    void seqNoteOff (int note) noexcept override { events.push_back ({ now, note, false, -1 }); }
+    std::vector<SeqEvent> ons() const
+    {
+        std::vector<SeqEvent> r;
+        for (const auto& e : events)
+            if (e.on)
+                r.push_back (e);
+        return r;
+    }
+};
+
+struct SeqRig
+{
+    std::unique_ptr<SeqArp> seq = std::make_unique<SeqArp>();
+    SeqParams p;
+    Transport t;
+    SeqRecorder rec;
+    SeqRig()
+    {
+        seq->setSampleRate (48000.0f);
+        p.on = true;
+        t.bpm = 120.0;
+        t.playing = false;
+    }
+    // Runs for `samples`, in host blocks of `block`.
+    void run (int64_t samples, int block = 512)
+    {
+        const int64_t end = rec.now + samples;
+        while (rec.now < end)
+        {
+            int left = (int) std::min<int64_t> (block, end - rec.now);
+            while (left > 0)
+            {
+                const int n = seq->run (left, p, t, rec);
+                rec.now += n;
+                left -= n;
+                if (t.playing)
+                    t.ppq += (double) n * t.bpm / 60.0 / 48000.0;
+            }
+        }
+    }
+};
+
+static std::vector<int> notesOf (const std::vector<SeqEvent>& ev)
+{
+    std::vector<int> r;
+    for (const auto& e : ev)
+        r.push_back (e.note);
+    return r;
+}
+
+static void testArpOrdersAndTiming()
+{
+    struct Case { int order, octaves; std::vector<int> keys, expect; };
+    const std::vector<Case> cases {
+        { ArpUp, 1, { 64, 60, 67 }, { 60, 64, 67, 60, 64, 67 } },
+        { ArpDown, 1, { 64, 60, 67 }, { 67, 64, 60, 67, 64, 60 } },
+        { ArpUpDownIncl, 1, { 60, 64, 67 }, { 60, 64, 67, 67, 64, 60, 60 } },
+        { ArpUpDownExcl, 1, { 60, 64, 67 }, { 60, 64, 67, 64, 60, 64, 67 } },
+        { ArpAsPlayed, 1, { 67, 60, 64 }, { 67, 60, 64, 67 } },
+        { ArpUp, 2, { 60, 64, 67 }, { 60, 64, 67, 72, 76, 79, 60 } },
+    };
+    for (const auto& c : cases)
+    {
+        SeqRig rig;
+        rig.p.mode = SeqModeArp;
+        rig.p.arpOrder = c.order;
+        rig.p.arpOctaves = c.octaves;
+        for (int k : c.keys)
+            rig.seq->keyDown (k, 0.9f, false, false);
+        rig.run (6000 * (int64_t) c.expect.size() - 10); // 1/16 at 120 BPM = 6000 samples
+        const auto ons = rig.rec.ons();
+        CHECK (notesOf (ons) == c.expect, "arp order");
+        for (size_t i = 0; i < ons.size(); ++i)
+            CHECK (ons[i].time == (int64_t) i * 6000, "arp steps land on the 1/16 grid");
+    }
+
+    // Gate 50 %: each note ends half a step later; on/off counts balance after release.
+    SeqRig rig;
+    rig.seq->keyDown (60, 0.9f, false, false);
+    rig.run (6000 * 4);
+    for (const auto& e : rig.rec.events)
+        if (! e.on)
+            CHECK (e.time % 6000 == 3000, "gate 50 % ends mid-step");
+    rig.seq->keyUp (60, false, false);
+    rig.run (48000);
+    int bal = 0;
+    for (const auto& e : rig.rec.events)
+        bal += e.on ? 1 : -1;
+    CHECK (bal == 0, "every arp note gets its note-off");
+}
+
+static void testSeqSwingAndPitch()
+{
+    SeqRig rig;
+    rig.p.mode = SeqModeSeq;
+    rig.p.swing = 0.75f;
+    SeqPattern pat;
+    const int pitches[4] = { 0, 7, 12, 3 };
+    for (int i = 0; i < kSeqSteps; ++i)
+        pat.steps[(size_t) i].pitch = pitches[i % 4];
+    rig.seq->setPattern (pat);
+    rig.seq->keyDown (48, 0.9f, false, false);
+    rig.run (24000 - 10);
+    const auto ons = rig.rec.ons();
+    CHECK (notesOf (ons) == std::vector<int> ({ 48, 55, 60, 51 }), "seq pitch track transposes the held key");
+    if (ons.size() == 4)
+    {
+        CHECK (ons[0].time == 0 && ons[2].time == 12000, "even steps stay on the grid");
+        CHECK (ons[1].time == 9000 && ons[3].time == 21000, "75 % swing delays odd steps by half a step");
+    }
+
+    // Chord held in Seq mode: every step plays all keys.
+    SeqRig chord;
+    chord.p.mode = SeqModeSeq;
+    chord.seq->keyDown (60, 0.9f, false, false);
+    chord.seq->keyDown (64, 0.9f, false, false);
+    chord.run (6000 * 2 - 10);
+    CHECK (chord.rec.ons().size() == 4, "seq plays the whole held chord each step");
+
+    // Scale snap: C# (1) snaps down to C in Major.
+    CHECK (seqSnapToScale (1, kSeqScales[1].weights) == 0, "snap to scale");
+    CHECK (seqSnapToScale (6, kSeqScales[1].weights) == 5, "snap ties go down");
+    CHECK (seqSnapToScale (10, kSeqScales[1].weights) == 9, "snap to nearest");
+}
+
+static void testSeqStepsProbabilityAndPolymetry()
+{
+    {
+        SeqRig rig;
+        SeqPattern pat;
+        for (int i = 0; i < kSeqSteps; ++i)
+            pat.steps[(size_t) i].on = (i % 2) == 0;
+        rig.seq->setPattern (pat);
+        rig.seq->keyDown (60, 0.9f, false, false);
+        rig.run (6000 * 8 - 10);
+        CHECK (rig.rec.ons().size() == 4, "off steps are rests");
+    }
+    {
+        SeqRig rig;
+        SeqPattern pat;
+        for (auto& st : pat.steps)
+            st.prob = 0.0f;
+        rig.seq->setPattern (pat);
+        rig.seq->keyDown (60, 0.9f, false, false);
+        rig.run (48000);
+        CHECK (rig.rec.ons().empty(), "probability 0 never plays");
+    }
+    {
+        SeqRig rig;
+        SeqPattern pat;
+        for (auto& st : pat.steps)
+            st.prob = 0.5f;
+        rig.seq->setPattern (pat);
+        rig.seq->keyDown (60, 0.9f, false, false);
+        rig.run (6000 * 400);
+        const auto n = rig.rec.ons().size();
+        CHECK (n > 150 && n < 250, "probability 50 % plays about half the steps");
+    }
+    {
+        // Polymetry: pitch track 3 steps long against 16 for the rest.
+        SeqRig rig;
+        rig.p.mode = SeqModeSeq;
+        rig.p.polymetry = true;
+        SeqPattern pat;
+        pat.tracks[TrackPitch].length = 3;
+        pat.steps[0].pitch = 0;
+        pat.steps[1].pitch = 4;
+        pat.steps[2].pitch = 7;
+        rig.seq->setPattern (pat);
+        rig.seq->keyDown (60, 0.9f, false, false);
+        rig.run (6000 * 7 - 10);
+        CHECK (notesOf (rig.rec.ons()) == std::vector<int> ({ 60, 64, 67, 60, 64, 67, 60 }), "polymetry: track length 3");
+    }
+    {
+        // Length 4 + Ping-Pong.
+        SeqRig rig;
+        rig.p.mode = SeqModeSeq;
+        rig.p.length = 4;
+        rig.p.direction = SeqPingPong;
+        SeqPattern pat;
+        for (int i = 0; i < 4; ++i)
+            pat.steps[(size_t) i].pitch = i;
+        rig.seq->setPattern (pat);
+        rig.seq->keyDown (60, 0.9f, false, false);
+        rig.run (6000 * 8 - 10);
+        CHECK (notesOf (rig.rec.ons()) == std::vector<int> ({ 60, 61, 62, 63, 62, 61, 60, 61 }), "ping-pong");
+    }
+    {
+        // Track rate divider: octave track moves every 2 steps.
+        SeqRig rig;
+        rig.p.mode = SeqModeSeq;
+        SeqPattern pat;
+        pat.tracks[TrackOctave].divider = 2;
+        pat.steps[1].octave = 1;
+        rig.seq->setPattern (pat);
+        rig.seq->keyDown (60, 0.9f, false, false);
+        rig.run (6000 * 4 - 10);
+        CHECK (notesOf (rig.rec.ons()) == std::vector<int> ({ 60, 60, 72, 72 }), "track divider");
+    }
+}
+
+static void testSeqHoldSlideAndHostSync()
+{
+    {
+        SeqRig rig;
+        rig.seq->keyDown (60, 0.9f, true, false);
+        rig.seq->keyUp (60, true, false);
+        rig.run (6000 * 3 - 10);
+        CHECK (rig.rec.ons().size() == 3, "hold latches released keys");
+        rig.seq->keyDown (67, 0.9f, true, false); // new chord after letting go replaces the latch
+        rig.rec.events.clear();
+        rig.run (6000 * 3);
+        for (const auto& e : rig.rec.ons())
+            CHECK (e.note == 67, "a new key replaces the latched one");
+        rig.seq->pedalChanged (false, false); // Hold switched off
+        rig.seq->keyUp (67, false, false);
+        rig.rec.events.clear();
+        rig.run (48000);
+        CHECK (rig.rec.ons().empty(), "hold off: the latch is released");
+    }
+    {
+        // Slide on step 2: the note glides from step 1 (no note-off in between).
+        SeqRig rig;
+        rig.p.mode = SeqModeSeq;
+        SeqPattern pat;
+        pat.steps[1].pitch = 5;
+        pat.steps[1].slide = 0.5f;
+        rig.seq->setPattern (pat);
+        rig.seq->keyDown (60, 0.9f, false, false);
+        rig.run (6000 * 2 - 10);
+        const auto ons = rig.rec.ons();
+        CHECK (ons.size() == 2 && ons[1].slideFrom == 60 && ons[1].note == 65, "slide step glides from the previous note");
+        bool offBeforeSlide = false;
+        for (const auto& e : rig.rec.events)
+            if (! e.on && e.note == 60 && e.time < 6000)
+                offBeforeSlide = true;
+        CHECK (! offBeforeSlide, "the note before a slide is held into it");
+    }
+    {
+        // Host playing: steps follow the song position.
+        SeqRig rig;
+        rig.t.playing = true;
+        rig.t.ppq = 0.1; // 0.4 of a 1/16 step past the grid
+        rig.seq->keyDown (60, 0.9f, false, false);
+        rig.run (6000 * 2);
+        const auto ons = rig.rec.ons();
+        CHECK (! ons.empty() && ons[0].time == 3600, "host sync: first note on the next grid step");
+        rig.rec.events.clear();
+        rig.t.ppq = 8.0; // loop jump to bar 3
+        rig.run (6000 * 2);
+        CHECK (rig.rec.ons().size() == 2 && rig.rec.ons()[0].time % 6000 == 0, "host sync: follows a jump");
+    }
+    {
+        // A key pressed a little after the beat still plays that step at once.
+        SeqRig rig;
+        rig.t.playing = true;
+        rig.t.ppq = 0.04;
+        rig.seq->keyDown (60, 0.9f, false, false);
+        rig.run (100);
+        CHECK (rig.rec.ons().size() == 1 && rig.rec.ons()[0].time == 0, "late key press plays the missed step");
+    }
+}
+
+static void testSeqRandomness()
+{
+    SeqPattern pat;
+    pat.tracks[TrackPitch].random = 1.0f;
+    pat.tracks[TrackVelocity].random = 0.5f;
+    SeqParams p;
+    p.mode = SeqModeSeq;
+    p.scale = 1; // Major
+    auto pitches = [&] (uint32_t seed) {
+        std::vector<int> v;
+        for (int c = 0; c < kSeqSteps; ++c)
+        {
+            int cols[NumSeqTracks];
+            for (auto& x : cols) x = c;
+            v.push_back (seqResolve (pat, p, cols, seed).pitch);
+        }
+        return v;
+    };
+    CHECK (pitches (7) == pitches (7), "random values repeat for the same seed");
+    CHECK (pitches (7) != pitches (seqNextSeed (7)), "Regen changes the random values");
+    for (int x : pitches (99))
+        CHECK (kSeqScales[1].weights[(size_t) (x % 12)] > 0.0f, "random pitches stay in the scale");
+
+    // Locked column keeps its values on Regen.
+    pat.steps[3].lockSeed = 7;
+    CHECK (pitches (7)[3] == pitches (12345)[3], "locked column keeps its random values");
+
+    // Apply random bakes the offsets in: resolves the same with random off.
+    SeqPattern baked = pat;
+    seqApplyRandom (baked, p, 7);
+    CHECK (baked.tracks[TrackPitch].random == 0.0f, "apply random clears the amounts");
+    std::vector<int> bakedPitches;
+    for (int c = 0; c < kSeqSteps; ++c)
+        bakedPitches.push_back (baked.steps[(size_t) c].pitch);
+    CHECK (bakedPitches == pitches (7), "apply random keeps what was playing");
+
+    // Auto-regen: values change from bar to bar.
+    SeqRig rig;
+    rig.p = p;
+    rig.p.on = true;
+    rig.p.autoRegen = 5; // 1 bar
+    rig.seq->setPattern (pat);
+    rig.seq->keyDown (60, 0.9f, false, false);
+    const uint32_t s0 = rig.seq->uiSeed.load();
+    rig.run (6000 * 17);
+    CHECK (rig.seq->uiSeed.load() != s0, "auto-regen changes the seed each bar");
+}
+
+static void testSeqInTheSynth()
+{
+    auto sPtr = std::make_unique<SynthCore>();
+    SynthCore& s = *sPtr;
+    s.setSampleRate (48000.0f);
+    s.params = patches::init();
+    s.params.seq.on = true;
+    s.params.seq.mode = SeqModeArp;
+    s.noteOn (60, 0.9f);
+    s.noteOn (64, 0.9f);
+    s.noteOn (67, 0.9f);
+    const auto st = renderStats (s, 48000);
+    CHECK (st.finite && st.rms > 0.001f, "arp makes sound");
+    CHECK (s.activeVoiceCount() <= 3, "arp at 50 % gate plays one note at a time (plus releases)");
+    s.noteOff (60);
+    s.noteOff (64);
+    s.noteOff (67);
+    renderStats (s, 48000 * 3);
+    CHECK (s.activeVoiceCount() == 0, "arp: nothing left sounding after release");
+
+    // Toggling the Seq/Arp with keys down leaves nothing stuck.
+    s.noteOn (60, 0.9f);
+    renderStats (s, 12000);
+    s.params.seq.on = false;
+    renderStats (s, 12000);
+    CHECK (s.activeVoiceCount() >= 1, "seq off: the held key sounds normally");
+    s.params.seq.on = true;
+    renderStats (s, 12000);
+    s.noteOff (60);
+    renderStats (s, 48000 * 3);
+    CHECK (s.activeVoiceCount() == 0, "seq toggles leave no stuck notes");
+
+    // Chord arp: Unison Chord (major triad) is spread by the arp.
+    s.params.engine[0].unisonOn = true;
+    s.params.engine[0].unisonMode = UnisonChord;
+    s.params.engine[0].chord = 3; // Major
+    s.params.engine[0].unisonVoices = 3;
+    s.params.seq.arpOrder = ArpUp;
+    s.noteOn (60, 0.9f);
+    const auto chordSt = renderStats (s, 24000);
+    CHECK (chordSt.finite && chordSt.rms > 0.001f, "chord arp makes sound");
+    s.noteOff (60);
+    renderStats (s, 48000 * 3);
+    CHECK (s.activeVoiceCount() == 0, "chord arp leaves nothing stuck");
+
+    // Sustain pedal latches the arp's keys instead of the voices.
+    s.params.engine[0].unisonOn = false;
+    s.setSustain (true);
+    s.noteOn (62, 0.9f);
+    s.noteOff (62);
+    renderStats (s, 24000);
+    CHECK (s.activeVoiceCount() >= 1, "pedal keeps the arp running");
+    s.setSustain (false);
+    renderStats (s, 48000 * 3);
+    CHECK (s.activeVoiceCount() == 0, "pedal up: arp stops");
+}
+
+static void testChordArpNotes()
+{
+    SeqRig rig;
+    int iv[3] = { 0, 4, 7 };
+    rig.seq->setChord (iv, 3);
+    rig.p.arpOrder = ArpUp;
+    rig.seq->keyDown (60, 0.9f, false, false);
+    rig.run (6000 * 4 - 10);
+    CHECK (notesOf (rig.rec.ons()) == std::vector<int> ({ 60, 64, 67, 60 }), "chord arp spreads the unison chord");
+}
+
+static void testSeqRateChangeAndOverlap()
+{
+    SeqRig rig;
+    SeqPattern pat;
+    for (auto& st : pat.steps)
+        st.gate = 3.0f; // overlapping notes of the same pitch
+    rig.seq->setPattern (pat);
+    rig.seq->keyDown (60, 0.9f, false, false);
+    rig.run (6000 * 5);
+    rig.p.rateDiv = 10; // 1/8
+    rig.run (48000);
+    rig.p.rateDiv = 15; // 1/16 T
+    rig.run (48000);
+    rig.seq->keyUp (60, false, false);
+    rig.run (48000 * 2);
+    // Same-pitch overlaps end the old note first: on/off alternate per note.
+    int depth = 0, maxDepth = 0;
+    for (const auto& e : rig.rec.events)
+    {
+        depth += e.on ? 1 : -1;
+        maxDepth = std::max (maxDepth, depth);
+    }
+    CHECK (depth == 0 && maxDepth == 1, "same-pitch overlaps never stack");
+}
+
 int main()
 {
+    testArpOrdersAndTiming();
+    testSeqSwingAndPitch();
+    testSeqStepsProbabilityAndPolymetry();
+    testSeqHoldSlideAndHostSync();
+    testSeqRandomness();
+    testSeqInTheSynth();
+    testChordArpNotes();
+    testSeqRateChangeAndOverlap();
     testEveryEffectRenders();
     testDelayAndReverbBehave();
     testCompressorReducesPeaks();

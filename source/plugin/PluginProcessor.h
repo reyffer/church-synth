@@ -56,6 +56,13 @@ public:
     cs::ModRouting getRoutes() const;
     void setRoutes (const cs::ModRouting& r);
 
+    // --- Seq/Arp pattern (message thread) -------------------------------------
+    cs::SeqPattern getPattern() const;
+    void setPattern (const cs::SeqPattern& p);
+    const cs::SeqArp& getSeq() const noexcept { return synth.getSeq(); }
+    cs::SeqParams currentSeqParams() const; // host parameter values (for the editor's random preview)
+    uint32_t patternVersion() const noexcept { return patternSeq.load (std::memory_order_acquire); }
+
     // FX: create effects for the current slot types (message thread). Exposed for tests.
     void syncEffects();
 
@@ -91,6 +98,15 @@ private:
     void pullRoutes() noexcept;
     static juce::ValueTree routesToTree (const cs::ModRouting& r);
     static cs::ModRouting routesFromTree (const juce::ValueTree& t);
+
+    // Seq pattern: same seqlock hand-off as the routes.
+    mutable juce::CriticalSection patternLock;
+    cs::SeqPattern patternEdit, patternShared, patternAudio;
+    std::atomic<uint32_t> patternSeq { 0 };
+    uint32_t patternSeqSeen = ~0u;
+    void pullPattern() noexcept;
+    static juce::ValueTree patternToTree (const cs::SeqPattern& p);
+    static cs::SeqPattern patternFromTree (const juce::ValueTree& t);
 
     class Loader;
     std::unique_ptr<Loader> loader;

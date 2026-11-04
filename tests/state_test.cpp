@@ -18,8 +18,10 @@ static void snapshotEditor (ChurchSynthProcessor& p, const juce::File& dir)
     for (int i = 0; i < tabs->getNumTabs(); ++i)
     {
         tabs->setCurrentTabIndex (i);
+        if (auto* tc = dynamic_cast<juce::Timer*> (ed.get()))
+            tc->timerCallback(); // let the page refresh once
         const auto img = ed->createComponentSnapshot (ed->getLocalBounds());
-        juce::FileOutputStream out (dir.getChildFile ("editor_" + tabs->getTabNames()[i] + ".png"));
+        juce::FileOutputStream out (dir.getChildFile ("editor_" + tabs->getTabNames()[i].replace ("/", "-") + ".png"));
         out.setPosition (0);
         out.truncate();
         juce::PNGImageFormat().writeImageToStream (img, out);
@@ -45,6 +47,17 @@ int main (int argc, char** argv)
     a.syncEffects();
     a.apvts.getParameter ("fx_a1_p3")->setValueNotifyingHost (0.123f);
     a.apvts.getParameter ("fx_aux_send")->setValueNotifyingHost (0.5f);
+
+    // A sequencer pattern with a few edits.
+    auto pat = a.getPattern();
+    pat.steps[3].pitch = 7;
+    pat.steps[5].on = false;
+    pat.steps[2].slide = 0.4f;
+    pat.tracks[cs::TrackGate].length = 5;
+    pat.tracks[cs::TrackPitch].random = 0.25f;
+    pat.customWeights[1] = 2.0f;
+    a.setPattern (pat);
+    a.apvts.getParameter ("seq_on")->setValueNotifyingHost (1.0f);
 
     juce::MemoryBlock state;
     a.getStateInformation (state);
@@ -74,6 +87,17 @@ int main (int argc, char** argv)
     {
         std::printf ("FAIL: FX settings not restored (or aux default not 100%% wet)\n");
         ++failures;
+    }
+
+    {
+        const auto pb = b.getPattern();
+        if (pb.steps[3].pitch != 7 || pb.steps[5].on || std::abs (pb.steps[2].slide - 0.4f) > 1.0e-4f
+            || pb.tracks[cs::TrackGate].length != 5 || std::abs (pb.tracks[cs::TrackPitch].random - 0.25f) > 1.0e-4f
+            || std::abs (pb.customWeights[1] - 2.0f) > 1.0e-3f || b.apvts.getParameter ("seq_on")->getValue() < 0.5f)
+        {
+            std::printf ("FAIL: sequencer pattern not restored\n");
+            ++failures;
+        }
     }
 
     // Render a block with the restored routes to make sure the hand-off works.

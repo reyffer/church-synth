@@ -47,6 +47,7 @@ public:
     float getLevel() const noexcept { return env.getLevel(); }
 
     bool sustained = false; // gate released while sustain pedal is down
+    bool singleUnison = false; // chord arp: engines in Unison Chord mode play one note (the arp spreads the chord)
 
     // Begin a note on an idle voice (resets oscillators/filters).
     void start (const SynthParams& p, int newNote, float vel, float fromPitch, uint64_t stamp, uint32_t seed) noexcept
@@ -86,7 +87,9 @@ public:
     }
 
     // Retrigger/legato on a voice that is already sounding (no phase reset, no click).
-    void retarget (const SynthParams& p, int newNote, float vel, bool retriggerEnv, bool glideFromCurrent, uint64_t stamp) noexcept
+    // glideSeconds >= 0 overrides the Glide setting (sequencer slides).
+    void retarget (const SynthParams& p, int newNote, float vel, bool retriggerEnv, bool glideFromCurrent, uint64_t stamp,
+                   float glideSeconds = -1.0f) noexcept
     {
         note = newNote;
         velocity = vel;
@@ -96,7 +99,7 @@ public:
         targetPitch = (float) newNote;
         if (! glideFromCurrent)
             pitch = targetPitch;
-        glideStart (p);
+        glideStart (p, glideSeconds);
         if (retriggerEnv)
         {
             env.gateOn();
@@ -162,10 +165,16 @@ public:
         computeSources (sp, g, n);
 
         const SynthParams* use = &p;
-        if (routing.numTouched > 0)
+        const bool chordSingle = singleUnison && hasChordEngine (p);
+        if (routing.numTouched > 0 || chordSingle)
         {
             local = p;
-            applyRouting (routing);
+            if (routing.numTouched > 0)
+                applyRouting (routing);
+            if (chordSingle)
+                for (auto& e : local.engine)
+                    if (e.unisonMode == UnisonChord)
+                        e.unisonOn = false;
             use = &local;
             localValid = true;
         }
@@ -178,6 +187,14 @@ public:
     }
 
     float sourceValue (int s) const noexcept { return (s >= 0 && s < NumModSources) ? src[s] : 0.0f; }
+
+    static bool hasChordEngine (const SynthParams& p) noexcept
+    {
+        for (const auto& e : p.engine)
+            if (e.on && e.unisonOn && e.unisonMode == UnisonChord)
+                return true;
+        return false;
+    }
 
 private:
     void renderAudio (const SynthParams& p, float bendSemis, int n, const VoiceOut& out) noexcept
@@ -639,10 +656,11 @@ private:
     uint32_t pendingSeed = 1;
 
     // Constant-time glide: covers the whole interval in p.glide seconds.
-    void glideStart (const SynthParams& p) noexcept
+    void glideStart (const SynthParams& p, float glideOverride = -1.0f) noexcept
     {
         const float dist = std::abs (targetPitch - pitch);
-        glideRate = (p.glide > 0.0f && dist > 0.0f) ? dist / (p.glide * sampleRate) : 0.0f;
+        const float time = glideOverride >= 0.0f ? glideOverride : p.glide;
+        glideRate = (time > 0.0f && dist > 0.0f) ? dist / (time * sampleRate) : 0.0f;
         if (glideRate <= 0.0f)
             pitch = targetPitch;
     }
