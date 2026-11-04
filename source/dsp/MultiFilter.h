@@ -218,7 +218,7 @@ private:
     uint32_t lofiRng = 22222u;
 
     // Comb
-    static constexpr int kCombSize = 4096;
+    static constexpr int kCombSize = 2048; // >= 23 Hz at 48 kHz, 47 Hz at 96 kHz
     float comb[2][kCombSize] {};
     int combPos = 0;
     float combDelay = 100.0f, combLp[2] {};

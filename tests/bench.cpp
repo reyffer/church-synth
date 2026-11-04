@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cstdio>
 #include <string>
+#include <memory>
 #include <vector>
 
 using namespace cs;
@@ -69,7 +70,8 @@ int main (int argc, char** argv)
     std::printf ("%-26s %10s %12s   (best of 3)\n", "patch", "us/block", "% one core");
     for (const auto& c : cases)
     {
-        SynthCore s;
+        auto sPtr = std::make_unique<SynthCore>();
+        SynthCore& s = *sPtr;
         s.setSampleRate ((float) sr);
         s.params = c.params;
         s.setRouting (c.routing);

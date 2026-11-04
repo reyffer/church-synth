@@ -9,6 +9,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <memory>
 #include <vector>
 
 using namespace cs;
@@ -57,7 +58,8 @@ static void testOscillatorsBoundedAndCentred()
         for (float width : { 0.1f, 0.5f, 0.9f })
             for (int note : { 24, 60, 96, 120 })
             {
-                SynthCore s;
+                auto sPtr = std::make_unique<SynthCore>();
+                SynthCore& s = *sPtr;
                 s.setSampleRate (48000.0f);
                 s.params.engine[0].osc[0].wave = w;
                 s.params.engine[0].osc[0].width = width;
@@ -80,7 +82,8 @@ static void testFiltersStable()
         for (float reso : { 0.0f, 0.7f, 1.0f })
             for (bool analog : { false, true })
             {
-                SynthCore s;
+                auto sPtr = std::make_unique<SynthCore>();
+                SynthCore& s = *sPtr;
                 s.setSampleRate (48000.0f);
                 auto& f = s.params.filter[0];
                 f.mode = mode;
@@ -106,7 +109,8 @@ static void testFiltersStable()
 
 static void testPolyphonyLimitAndRelease()
 {
-    SynthCore s;
+    auto sPtr = std::make_unique<SynthCore>();
+    SynthCore& s = *sPtr;
     s.setSampleRate (48000.0f);
     s.params.maxVoices = 8;
     s.params.ampEnv.release = 0.05f;
@@ -124,7 +128,8 @@ static void testPolyphonyLimitAndRelease()
 
 static void testStealIsRespectedOnQuickRelease()
 {
-    SynthCore s;
+    auto sPtr = std::make_unique<SynthCore>();
+    SynthCore& s = *sPtr;
     s.setSampleRate (48000.0f);
     s.params.maxVoices = 1;
     s.params.voicing = VoicingPolyRotate;
@@ -139,7 +144,8 @@ static void testStealIsRespectedOnQuickRelease()
 
 static void testSustainPedal()
 {
-    SynthCore s;
+    auto sPtr = std::make_unique<SynthCore>();
+    SynthCore& s = *sPtr;
     s.setSampleRate (48000.0f);
     s.params.ampEnv.release = 0.05f;
     s.setSustain (true);
@@ -155,7 +161,8 @@ static void testSustainPedal()
 
 static void testMonoLegato()
 {
-    SynthCore s;
+    auto sPtr = std::make_unique<SynthCore>();
+    SynthCore& s = *sPtr;
     s.setSampleRate (48000.0f);
     s.params.voicing = VoicingMonoLegato;
     s.params.ampEnv.release = 0.05f;
@@ -175,7 +182,8 @@ static void testHeavyPatchSane()
 {
     for (auto p : { patches::pad(), patches::supersaw(), patches::worstCase() })
     {
-        SynthCore s;
+        auto sPtr = std::make_unique<SynthCore>();
+        SynthCore& s = *sPtr;
         s.setSampleRate (44100.0f);
         s.params = p;
         for (int n : { 48, 55, 60, 64, 67, 71, 74, 79 })
@@ -191,7 +199,8 @@ static void testHeavyPatchSane()
 static void testDriveLevelIsSmooth()
 {
     auto levelDb = [] (float drive) {
-        SynthCore s;
+        auto sPtr = std::make_unique<SynthCore>();
+        SynthCore& s = *sPtr;
         s.setSampleRate (48000.0f);
         s.params.filter[0].mode = LP24;
         s.params.filter[0].cutoff = 3000.0f;
@@ -220,7 +229,8 @@ static void testFactoryWavetablesPlay()
     for (int t = 0; t < lib.numFactoryWavetables(); ++t)
         for (float pos : { 0.0f, 0.5f, 1.0f })
         {
-            SynthCore s;
+            auto sPtr = std::make_unique<SynthCore>();
+            SynthCore& s = *sPtr;
             s.setSampleRate (48000.0f);
             auto& e = s.params.engine[0];
             e.type = EngineWavetable;
@@ -241,7 +251,8 @@ static void testFactoryWavetablesPlay()
 // Spectrum check: a high saw from the wavetable must not alias (mip-mapping works).
 static void testWavetableNoAliasing()
 {
-    SynthCore s;
+    auto sPtr = std::make_unique<SynthCore>();
+    SynthCore& s = *sPtr;
     s.setSampleRate (48000.0f);
     auto& e = s.params.engine[0];
     e.type = EngineWavetable;
@@ -301,7 +312,8 @@ static void testAllWavetableFeatures()
             for (int pd = 0; pd < PdCount; ++pd)
                 for (int mw : { (int) ModSine, (int) ModSquare, (int) ModPinkNoise })
                 {
-                    SynthCore s;
+                    auto sPtr = std::make_unique<SynthCore>();
+                    SynthCore& s = *sPtr;
                     s.setSampleRate (44100.0f);
                     auto& e = s.params.engine[0];
                     e.type = EngineWavetable;
@@ -335,7 +347,8 @@ static void testNoisesAndUtility()
     for (int k = 0; k < lib.numFactoryNoises(); ++k)
         for (bool loop : { true, false })
         {
-            SynthCore s;
+            auto sPtr = std::make_unique<SynthCore>();
+            SynthCore& s = *sPtr;
             s.setSampleRate (48000.0f);
             s.params.engine[0].on = false;
             auto& u = s.params.utility;
@@ -362,7 +375,8 @@ static void testCrossModBothWays()
     auto p = patches::crossMod();
     for (int mode = 0; mode < 3; ++mode)
     {
-        SynthCore s;
+        auto sPtr = std::make_unique<SynthCore>();
+        SynthCore& s = *sPtr;
         s.setSampleRate (48000.0f);
         s.params = p;
         s.params.engine[1].modFromEngine = mode >= 1; // mode 2: both directions
@@ -378,7 +392,8 @@ static void testCrossModBothWays()
 
 static void testEngineTypeSwitchWhileHeld()
 {
-    SynthCore s;
+    auto sPtr = std::make_unique<SynthCore>();
+    SynthCore& s = *sPtr;
     s.setSampleRate (48000.0f);
     s.noteOn (60, 1.0f);
     renderStats (s, 4800);
@@ -580,7 +595,8 @@ static void testRoutingModulates()
     // LFO -> cutoff makes the level move; no route keeps it steady.
     for (bool routed : { false, true })
     {
-        SynthCore s;
+        auto sPtr = std::make_unique<SynthCore>();
+        SynthCore& s = *sPtr;
         s.setSampleRate (48000.0f);
         s.params.filter[0].mode = LP24;
         s.params.filter[0].cutoff = 600.0f;
@@ -597,7 +613,8 @@ static void testRoutingModulates()
     // Sidechain: mod wheel at 0 disables the route, at 1 enables it.
     for (float wheel : { 0.0f, 1.0f })
     {
-        SynthCore s;
+        auto sPtr = std::make_unique<SynthCore>();
+        SynthCore& s = *sPtr;
         s.setSampleRate (48000.0f);
         s.params.lfo[0].rate.hz = 4.0f;
         ModRouting r;
@@ -612,7 +629,8 @@ static void testRoutingModulates()
 
     // Amp mod with an LFO as source makes a tremolo.
     {
-        SynthCore s;
+        auto sPtr = std::make_unique<SynthCore>();
+        SynthCore& s = *sPtr;
         s.setSampleRate (48000.0f);
         s.params.ampModSource = SrcLfo1;
         s.params.ampVelocity = 0.8f;
@@ -627,7 +645,8 @@ static void testGlobalVersusPolySources()
 {
     for (int retrig : { (int) RetrigPolyKbd, (int) RetrigFreeRun })
     {
-        SynthCore s;
+        auto sPtr = std::make_unique<SynthCore>();
+        SynthCore& s = *sPtr;
         s.setSampleRate (48000.0f);
         s.params.voicing = VoicingPolyReassign;
         s.params.lfo[0].rate.hz = 1.3f;
@@ -647,7 +666,8 @@ static void testGlobalVersusPolySources()
 
 static void testVoiceModulatorCycles()
 {
-    SynthCore s;
+    auto sPtr = std::make_unique<SynthCore>();
+    SynthCore& s = *sPtr;
     s.setSampleRate (48000.0f);
     s.params.random[0].type = RandVoiceMod;
     s.params.random[0].vmMode = VmCycle;
@@ -680,7 +700,8 @@ static void testModQuantize()
 static void testModulatedPatchSane()
 {
     ModRouting r;
-    SynthCore s;
+    auto sPtr = std::make_unique<SynthCore>();
+    SynthCore& s = *sPtr;
     s.setSampleRate (48000.0f);
     s.params = patches::modulatedPad (r);
     s.setRouting (r);
@@ -703,7 +724,8 @@ static void testAllFilterTypesStable()
                     {
                         if (type == FilterClassicType && sub > 0)
                             continue; // classic slopes are covered by testFiltersStable
-                        SynthCore s;
+                        auto sPtr = std::make_unique<SynthCore>();
+                        SynthCore& s = *sPtr;
                         s.setSampleRate (48000.0f);
                         auto& e = s.params.engine[0];
                         e.noiseVolume = 0.5f;
@@ -736,7 +758,8 @@ static void testAllFilterTypesStable()
 // Level of white noise (low-pass test) or a low saw (high-pass test) through one filter setting.
 static float filteredLevelDb (int type, int sub, float a, float cutoff, bool noise)
 {
-    SynthCore s;
+    auto sPtr = std::make_unique<SynthCore>();
+    SynthCore& s = *sPtr;
     s.setSampleRate (48000.0f);
     auto& e = s.params.engine[0];
     if (noise)
@@ -799,7 +822,8 @@ static void testSplitRoutingKeepsBothFilters()
     // Split sends F1 and F2 to separate buses; summed output must still contain both.
     for (int mode = 0; mode < RoutingModeCount; ++mode)
     {
-        SynthCore s;
+        auto sPtr = std::make_unique<SynthCore>();
+        SynthCore& s = *sPtr;
         s.setSampleRate (48000.0f);
         s.params.filterOutput = mode;
         s.params.filter[1].on = true;

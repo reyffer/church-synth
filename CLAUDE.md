@@ -11,6 +11,7 @@ Read SPEC.md first: it is the source of truth for features and holds the decisio
 - **Parameter IDs are permanent.** Never rename or remove an ID in `source/plugin/Parameters.cpp`; saved MainStage concerts depend on them. Add new IDs instead. Macros 1–4 must stay the first parameters.
 - **Original code only.** Surge XT (GPL) may be read as a DSP reference, never copied. Never copy Arturia content (wavetables, noises, presets, artwork) or use their product/effect names in the UI. Our names: Drive filter (Rage-like), Allpass filter (Ripple-like), Erode (Corroder-like), Vintage Chorus (Juno-style), Vintage Flanger.
 - **Factory content order is permanent.** `kWavetableList` / `kNoiseList` in `ContentFactory.cpp` are indexed by host parameters: append only, never reorder or remove. Content can be retuned, but don't change a table's character so much that saved presets sound wrong.
+- **Never put `SynthCore`, `Voice` or the processor on the stack** (they're ~1 MB; Windows' default stack is 1 MB). Use `std::make_unique`.
 - DSP core (`source/dsp`) stays JUCE-free so it can be tested and benchmarked anywhere.
 - Every DSP change: `ctest` passes and `cs_bench` doesn't regress without a reason.
 

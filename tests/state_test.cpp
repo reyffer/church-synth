@@ -10,7 +10,8 @@ int main()
     juce::ScopedJuceInitialiser_GUI init;
     int failures = 0;
 
-    ChurchSynthProcessor a;
+    auto aPtr = std::make_unique<ChurchSynthProcessor>(); // large object: keep it off the stack
+    auto& a = *aPtr;
     cs::ModRouting r;
     r.routes[r.count++] = { cs::SrcLfo1, cs::findModDest ("f1_cutoff"), 0.25f, cs::SrcModWheel, 0.75f };
     r.routes[r.count++] = { cs::SrcEnv2, cs::findModDest ("e1_wt_pos"), -0.5f, -1, 1.0f };
@@ -21,7 +22,8 @@ int main()
     juce::MemoryBlock state;
     a.getStateInformation (state);
 
-    ChurchSynthProcessor b;
+    auto bPtr = std::make_unique<ChurchSynthProcessor>();
+    auto& b = *bPtr;
     b.setStateInformation (state.getData(), (int) state.getSize());
     const auto got = b.getRoutes();
 
