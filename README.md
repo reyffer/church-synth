@@ -6,16 +6,14 @@ A lean, reliable hybrid synth for live worship, built to run several instances i
 
 ## Getting a build
 
-Every push to GitHub builds automatically. To download:
+Every successful build is published to the **Latest build** release:
+**https://github.com/reyffer/church-synth/releases/tag/latest**. Download the zip you need from there.
 
-1. Open the repo on GitHub → **Actions** → the latest green **build** run.
-2. Scroll to **Artifacts** and download **ChurchSynth-mac** or **ChurchSynth-windows**.
-
-The run's summary page also shows the CPU benchmark measured on an Apple Silicon machine.
+(Each build run's page under **Actions** also shows the CPU benchmark measured on an Apple Silicon machine.)
 
 ### Mac (MainStage / Logic)
 
-1. Unzip `ChurchSynth-AU-mac.zip` and copy **Church Synth.component** to `~/Library/Audio/Plug-Ins/Components/`.
+1. Download and unzip `ChurchSynth-AU-mac.zip` and copy **Church Synth.component** to `~/Library/Audio/Plug-Ins/Components/`.
 2. The build is not notarised by Apple, so clear the download flag once in Terminal:
    ```
    xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/"Church Synth.component"
@@ -26,7 +24,9 @@ Updating: quit MainStage, replace the component, run step 2 again, reopen.
 
 ### Windows (VST3, for sound design)
 
-Unzip `ChurchSynth-VST3-windows.zip` and copy **Church Synth.vst3** to `C:\Program Files\Common Files\VST3\`. A standalone `.exe` is also included.
+Download and unzip `ChurchSynth-VST3-windows.zip`, then copy **Church Synth.vst3** to `C:\Program Files\Common Files\VST3\`.
+
+`ChurchSynth-Standalone-windows.zip` has a standalone `.exe` (no DAW needed). It opens all MIDI inputs automatically. On Windows, a MIDI device can only be used by one program at a time, so close any DAW that is holding the controller first.
 
 ## Building locally
 

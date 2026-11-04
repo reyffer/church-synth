@@ -60,7 +60,7 @@ public:
         float duty[kNumOscs];
         for (int o = 0; o < kNumOscs; ++o)
         {
-            const auto& op = p.osc[o];
+            const auto& op = p.osc[(size_t) o];
             duty[o] = 0.5f + (std::clamp (op.width, 0.0f, 1.0f) - 0.5f) * 0.96f;
             float base = enginePitch + op.coarse;
             if (o > 0)

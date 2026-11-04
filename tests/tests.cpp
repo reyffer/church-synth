@@ -184,8 +184,34 @@ static void testHeavyPatchSane()
     }
 }
 
+// Regression: drive used to jump +3 dB at the first touch, then get quieter.
+static void testDriveLevelIsSmooth()
+{
+    auto levelDb = [] (float drive) {
+        SynthCore s;
+        s.setSampleRate (48000.0f);
+        s.params.filter[0].mode = LP24;
+        s.params.filter[0].cutoff = 3000.0f;
+        s.params.filter[0].drive = drive;
+        s.noteOn (48, 1.0f);
+        renderStats (s, 24000);
+        return 20.0f * std::log10 (renderStats (s, 24000).rms);
+    };
+    const float base = levelDb (0.0f);
+    float prev = base;
+    for (int i = 1; i <= 50; ++i)
+    {
+        const float d = (float) i / 50.0f;
+        const float lv = levelDb (d);
+        CHECK (std::abs (lv - prev) < 0.75f, "drive: no level jumps between neighbouring settings");
+        CHECK (std::abs (lv - base) < 3.0f, "drive: level stays within 3 dB of undriven");
+        prev = lv;
+    }
+}
+
 int main()
 {
+    testDriveLevelIsSmooth();
     testOscillatorsBoundedAndCentred();
     testFiltersStable();
     testPolyphonyLimitAndRelease();

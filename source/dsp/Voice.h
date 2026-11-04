@@ -44,7 +44,7 @@ public:
         pitch = fromPitch;
         glideStart (p);
         for (int e = 0; e < kNumEngines; ++e)
-            eng[e].startNote (p.engine[e], seed + 7919u * (uint32_t) e);
+            eng[e].startNote (p.engine[(size_t) e], seed + 7919u * (uint32_t) e);
         for (auto& f : filt)
             f.reset();
         for (int f = 0; f < kNumFilters; ++f)
@@ -110,7 +110,7 @@ public:
             return;
 
         // --- pitch / glide (control rate) ----------------------------------
-        if (pitch != targetPitch)
+        if (std::abs (pitch - targetPitch) > 0.0f)
         {
             const float step = glideRate * (float) n;
             if (std::abs (targetPitch - pitch) <= step || glideRate <= 0.0f)
@@ -126,7 +126,7 @@ public:
         float in1L[kBlock] {}, in1R[kBlock] {}, in2L[kBlock] {}, in2R[kBlock] {};
         for (int e = 0; e < kNumEngines; ++e)
         {
-            const auto& ep = p.engine[e];
+            const auto& ep = p.engine[(size_t) e];
             if (! ep.on)
                 continue;
             float eL[kBlock] {}, eR[kBlock] {};
@@ -145,7 +145,7 @@ public:
         float fGainL[kNumFilters], fGainR[kNumFilters];
         for (int f = 0; f < kNumFilters; ++f)
         {
-            const auto& fp = p.filter[f];
+            const auto& fp = p.filter[(size_t) f];
             const float target = std::log2 (cutoffFor (p, f) * std::exp2 (fp.keytrack * (notePitch - 60.0f) / 12.0f));
             cutoffLog[f] += 0.35f * (target - cutoffLog[f]);
             if (fp.on)
@@ -235,7 +235,7 @@ private:
 
     static float cutoffFor (const SynthParams& p, int f) noexcept
     {
-        return std::clamp (p.filter[f].cutoff, 16.0f, 22000.0f);
+        return std::clamp (p.filter[(size_t) f].cutoff, 16.0f, 22000.0f);
     }
 };
 } // namespace cs

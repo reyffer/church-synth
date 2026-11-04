@@ -48,16 +48,24 @@ public:
         }
 
         opG = g / (1.0f + g);
+
+        // Drive: saturate the input. Makeup keeps a reference-level signal at
+        // roughly the same loudness, so turning drive up adds grit/harmonics
+        // rather than jumping in volume. Wet amount fades in from 0 so the
+        // knob is continuous at its start.
+        drive = std::clamp (drive, 0.0f, 1.0f);
         driveGain = 1.0f + drive * drive * 15.0f;
-        driveMakeup = 1.0f / std::sqrt (driveGain);
+        constexpr float kRef = 0.5f;
+        driveMakeup = kRef / softClip (driveGain * kRef);
+        driveWet = std::min (1.0f, drive * 8.0f);
     }
 
     void process (float& l, float& r) noexcept
     {
-        if (driveGain > 1.001f)
+        if (driveWet > 0.0f)
         {
-            l = softClip (l * driveGain) * driveMakeup * 1.5f;
-            r = softClip (r * driveGain) * driveMakeup * 1.5f;
+            l += driveWet * (softClip (l * driveGain) * driveMakeup - l);
+            r += driveWet * (softClip (r * driveGain) * driveMakeup - r);
         }
 
         if (numStages == 0)
@@ -95,7 +103,7 @@ private:
     int mode = LP12, numStages = 1;
     bool analog = true;
     float g = 0.1f, opG = 0.1f;
-    float driveGain = 1.0f, driveMakeup = 1.0f;
+    float driveGain = 1.0f, driveMakeup = 1.0f, driveWet = 0.0f;
     Stage st[3];
     struct { float s[2] {}; } op;
 

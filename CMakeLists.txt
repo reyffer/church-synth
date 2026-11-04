@@ -80,6 +80,10 @@ if(CS_BUILD_PLUGIN)
         JUCE_VST3_CAN_REPLACE_VST2=0
         JUCE_DISPLAY_SPLASH_SCREEN=0)
 
+    # Our own standalone app: identical to JUCE's, but opens all MIDI inputs automatically.
+    target_sources(ChurchSynth_Standalone PRIVATE source/plugin/StandaloneApp.cpp)
+    target_compile_definitions(ChurchSynth_Standalone PRIVATE JUCE_USE_CUSTOM_PLUGIN_STANDALONE_APP=1)
+
     target_link_libraries(ChurchSynth
         PRIVATE
             cs_dsp
