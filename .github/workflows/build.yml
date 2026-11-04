@@ -10,8 +10,19 @@ env:
 
 jobs:
   macos:
-    name: macOS (AU + VST3, universal)
-    runs-on: macos-15
+    # Two Mac runners in parallel: GitHub's Apple Silicon queue is sometimes full for
+    # 15+ minutes and the job gets cancelled. Both build the same universal binary;
+    # the release uses Apple Silicon's if it finished, otherwise Intel's.
+    name: macOS ${{ matrix.arch }} (AU + VST3, universal)
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: intel
     steps:
       - uses: actions/checkout@v4
 
@@ -24,9 +35,9 @@ jobs:
       - name: DSP tests
         run: ctest --test-dir build -C $BUILD_TYPE --output-on-failure
 
-      - name: CPU benchmark (Apple Silicon)
+      - name: CPU benchmark
         run: |
-          echo '### CPU benchmark (Apple Silicon runner, 48 kHz, 128-sample blocks)' >> $GITHUB_STEP_SUMMARY
+          echo "### CPU benchmark ($(uname -m) runner, 48 kHz, 128-sample blocks)" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           ./build/cs_bench | tee -a $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
@@ -63,7 +74,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ChurchSynth-mac
+          name: ChurchSynth-mac-${{ matrix.arch }}
           path: dist/*.zip
 
   windows:
@@ -108,20 +119,38 @@ jobs:
   release:
     name: Publish "latest" release
     needs: [macos, windows]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    # Publish when Windows passed and at least one Mac build produced files.
+    if: always() && github.ref == 'refs/heads/main' && github.event_name == 'push' && needs.windows.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
+          name: ChurchSynth-windows
           path: dist
-          merge-multiple: true
+
+      - name: Mac build (Apple Silicon runner)
+        id: mac_arm
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: ChurchSynth-mac-arm64
+          path: dist
+
+      - name: Mac build (Intel runner, fallback)
+        if: steps.mac_arm.outcome != 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: ChurchSynth-mac-intel
+          path: dist
 
       - name: Replace the "latest" release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          ls dist
+          test -f dist/ChurchSynth-AU-mac.zip
           gh release delete latest --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" || true
           gh release create latest dist/*.zip --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --prerelease --title "Latest build" \
