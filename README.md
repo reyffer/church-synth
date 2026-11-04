@@ -1,0 +1,55 @@
+# Church Synth
+
+A lean, reliable hybrid synth for live worship, built to run several instances in MainStage on an M1 MacBook Pro. Its architecture is modelled on Arturia Pigments (2 engines + utility, 2 filters, deep modulation, 3 FX buses, seq/arp), cut down to what we actually use. The full feature list is in [SPEC.md](SPEC.md).
+
+**Status: Milestone 1.** Analog engine (×2), Classic filter (×2), amp envelope, poly/mono/glide. The editor is a temporary parameter list; the Pigments-style UI comes in Milestone 7.
+
+## Getting a build
+
+Every push to GitHub builds automatically. To download:
+
+1. Open the repo on GitHub → **Actions** → the latest green **build** run.
+2. Scroll to **Artifacts** and download **ChurchSynth-mac** or **ChurchSynth-windows**.
+
+The run's summary page also shows the CPU benchmark measured on an Apple Silicon machine.
+
+### Mac (MainStage / Logic)
+
+1. Unzip `ChurchSynth-AU-mac.zip` and copy **Church Synth.component** to `~/Library/Audio/Plug-Ins/Components/`.
+2. The build is not notarised by Apple, so clear the download flag once in Terminal:
+   ```
+   xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/"Church Synth.component"
+   ```
+3. Restart MainStage. It appears under **AU Instruments → Reyffer → Church Synth**.
+
+Updating: quit MainStage, replace the component, run step 2 again, reopen.
+
+### Windows (VST3, for sound design)
+
+Unzip `ChurchSynth-VST3-windows.zip` and copy **Church Synth.vst3** to `C:\Program Files\Common Files\VST3\`. A standalone `.exe` is also included.
+
+## Building locally
+
+Requires CMake ≥ 3.22 and a C++20 compiler. JUCE is fetched automatically.
+
+```
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+ctest --test-dir build          # DSP tests
+./build/cs_bench renders/       # CPU benchmark + WAV renders
+```
+
+`-DCS_BUILD_PLUGIN=OFF` builds only the DSP core, tests and benchmark (no JUCE needed).
+
+## Layout
+
+```
+source/dsp/      DSP core: plain C++, no JUCE (oscillators, filters, envelopes, voices)
+source/plugin/   JUCE plugin wrapper: parameters, processor, editor
+tests/           DSP tests, CPU benchmark, reference patches
+SPEC.md          Feature spec and decisions log
+```
+
+## Licensing
+
+Original code. Built with [JUCE](https://juce.com) 8 (AGPLv3 / commercial dual licence). Private, non-commercial use for our church is fine under either. Revisit the licence before ever distributing builds outside the team.

@@ -1,0 +1,8 @@
+build*/
+cmake-build-*/
+renders/
+dist/
+.DS_Store
+.vscode/
+.idea/
+*.user

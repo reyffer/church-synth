@@ -1,0 +1,106 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  macos:
+    name: macOS (AU + VST3, universal)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+
+      - name: Build
+        run: cmake --build build --config $BUILD_TYPE -j 4
+
+      - name: DSP tests
+        run: ctest --test-dir build -C $BUILD_TYPE --output-on-failure
+
+      - name: CPU benchmark (Apple Silicon)
+        run: |
+          echo '### CPU benchmark (Apple Silicon runner, 48 kHz, 128-sample blocks)' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          ./build/cs_bench | tee -a $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Sign (ad-hoc) and install AU
+        run: |
+          ART="build/ChurchSynth_artefacts/$BUILD_TYPE"
+          codesign --force --deep --sign - "$ART/AU/Church Synth.component"
+          codesign --force --deep --sign - "$ART/VST3/Church Synth.vst3"
+          codesign --force --deep --sign - "$ART/Standalone/Church Synth.app"
+          mkdir -p ~/Library/Audio/Plug-Ins/Components
+          cp -R "$ART/AU/Church Synth.component" ~/Library/Audio/Plug-Ins/Components/
+          killall -9 AudioComponentRegistrar || true
+
+      - name: auval (Apple AU validation)
+        run: auval -strict -v aumu Chsy Ryfr
+
+      - name: pluginval (AU + VST3)
+        run: |
+          curl -sSL -o pluginval.zip https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_macOS.zip
+          unzip -q pluginval.zip
+          PV=pluginval.app/Contents/MacOS/pluginval
+          ART="build/ChurchSynth_artefacts/$BUILD_TYPE"
+          $PV --strictness-level 7 --skip-gui-tests --validate "$ART/VST3/Church Synth.vst3"
+          $PV --strictness-level 7 --skip-gui-tests --validate ~/Library/Audio/Plug-Ins/Components/"Church Synth.component"
+
+      - name: Package
+        run: |
+          ART="build/ChurchSynth_artefacts/$BUILD_TYPE"
+          mkdir -p dist
+          ditto -c -k --keepParent "$ART/AU/Church Synth.component" "dist/ChurchSynth-AU-mac.zip"
+          ditto -c -k --keepParent "$ART/VST3/Church Synth.vst3" "dist/ChurchSynth-VST3-mac.zip"
+          ditto -c -k --keepParent "$ART/Standalone/Church Synth.app" "dist/ChurchSynth-Standalone-mac.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ChurchSynth-mac
+          path: dist/*.zip
+
+  windows:
+    name: Windows (VST3)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S . -B build -A x64
+
+      - name: Build
+        run: cmake --build build --config $env:BUILD_TYPE -j 4
+
+      - name: DSP tests
+        run: ctest --test-dir build -C $env:BUILD_TYPE --output-on-failure
+
+      - name: CPU benchmark
+        run: '& "build/$env:BUILD_TYPE/cs_bench.exe"'
+
+      - name: pluginval (VST3)
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Windows.zip -OutFile pluginval.zip
+          Expand-Archive pluginval.zip -DestinationPath pv
+          & pv/pluginval.exe --strictness-level 7 --skip-gui-tests --validate "build/ChurchSynth_artefacts/$env:BUILD_TYPE/VST3/Church Synth.vst3"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $art = "build/ChurchSynth_artefacts/$env:BUILD_TYPE"
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path "$art/VST3/Church Synth.vst3" -DestinationPath dist/ChurchSynth-VST3-windows.zip
+          Compress-Archive -Path "$art/Standalone/Church Synth.exe" -DestinationPath dist/ChurchSynth-Standalone-windows.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ChurchSynth-windows
+          path: dist/*.zip

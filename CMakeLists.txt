@@ -1,0 +1,91 @@
+cmake_minimum_required(VERSION 3.22)
+
+set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
+
+project(ChurchSynth VERSION 0.1.0 LANGUAGES C CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release)
+endif()
+
+option(CS_BUILD_PLUGIN "Build the AU/VST3/Standalone plugin (needs JUCE)" ON)
+option(CS_BUILD_TESTS  "Build DSP tests and the CPU benchmark" ON)
+
+# ---------------------------------------------------------------------------
+# DSP core: plain C++, no JUCE, so it can be tested and benchmarked anywhere.
+add_library(cs_dsp STATIC source/dsp/SynthCore.cpp)
+target_include_directories(cs_dsp PUBLIC source)
+set_target_properties(cs_dsp PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if(MSVC)
+    target_compile_options(cs_dsp PRIVATE /O2 /W4 /fp:fast)
+else()
+    target_compile_options(cs_dsp PRIVATE -O3 -Wall -Wextra -ffp-contract=fast)
+endif()
+
+# ---------------------------------------------------------------------------
+if(CS_BUILD_TESTS)
+    enable_testing()
+    add_executable(cs_tests tests/tests.cpp)
+    target_link_libraries(cs_tests PRIVATE cs_dsp)
+    target_include_directories(cs_tests PRIVATE tests)
+    add_test(NAME dsp_tests COMMAND cs_tests)
+
+    add_executable(cs_bench tests/bench.cpp)
+    target_link_libraries(cs_bench PRIVATE cs_dsp)
+    target_include_directories(cs_bench PRIVATE tests)
+endif()
+
+# ---------------------------------------------------------------------------
+if(CS_BUILD_PLUGIN)
+    include(FetchContent)
+    FetchContent_Declare(JUCE
+        GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
+        GIT_TAG 8.0.15
+        GIT_SHALLOW TRUE)
+    FetchContent_MakeAvailable(JUCE)
+
+    if(APPLE)
+        set(CS_FORMATS AU VST3 Standalone)
+    else()
+        set(CS_FORMATS VST3 Standalone)
+    endif()
+
+    juce_add_plugin(ChurchSynth
+        PRODUCT_NAME "Church Synth"
+        COMPANY_NAME "Reyffer"
+        BUNDLE_ID com.reyffer.churchsynth
+        PLUGIN_MANUFACTURER_CODE Ryfr
+        PLUGIN_CODE Chsy
+        FORMATS ${CS_FORMATS}
+        IS_SYNTH TRUE
+        NEEDS_MIDI_INPUT TRUE
+        NEEDS_MIDI_OUTPUT FALSE
+        IS_MIDI_EFFECT FALSE
+        EDITOR_WANTS_KEYBOARD_FOCUS FALSE
+        COPY_PLUGIN_AFTER_BUILD FALSE
+        AU_MAIN_TYPE kAudioUnitType_MusicDevice
+        VST3_CATEGORIES Instrument Synth
+        DESCRIPTION "Lean hybrid synth for live worship")
+
+    target_sources(ChurchSynth PRIVATE
+        source/plugin/Parameters.cpp
+        source/plugin/PluginProcessor.cpp
+        source/plugin/PluginEditor.cpp)
+
+    target_compile_definitions(ChurchSynth PUBLIC
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0
+        JUCE_VST3_CAN_REPLACE_VST2=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0)
+
+    target_link_libraries(ChurchSynth
+        PRIVATE
+            cs_dsp
+            juce::juce_audio_utils
+        PUBLIC
+            juce::juce_recommended_config_flags
+            juce::juce_recommended_lto_flags
+            juce::juce_recommended_warning_flags)
+endif()
