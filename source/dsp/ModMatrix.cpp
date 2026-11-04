@@ -99,6 +99,10 @@ std::vector<ModDest> build()
         add (p + "kbd", n + "Key Track", 0, 1, false, [f] (SynthParams& s) -> float& { return s.filter[f].keytrack; });
         add (p + "vol", n + "Volume", 0, 1, false, [f] (SynthParams& s) -> float& { return s.filter[f].volume; });
         add (p + "pan", n + "Pan", -1, 1, false, [f] (SynthParams& s) -> float& { return s.filter[f].pan; });
+        add (p + "a", n + "Control A", 0, 1, false, [f] (SynthParams& s) -> float& { return s.filter[f].a; });
+        add (p + "b", n + "Control B", 0, 1, false, [f] (SynthParams& s) -> float& { return s.filter[f].b; });
+        add (p + "c", n + "Control C", 0, 1, false, [f] (SynthParams& s) -> float& { return s.filter[f].c; });
+        add (p + "fm", n + "FM Amount", 0, 1, false, [f] (SynthParams& s) -> float& { return s.filter[f].fm; });
     }
     add ("f_routing", "Filter Routing", 0, 1, false, [] (SynthParams& s) -> float& { return s.filterRouting; });
     add ("amp_velo", "Amp Mod Amount", 0, 1, false, [] (SynthParams& s) -> float& { return s.ampVelocity; });

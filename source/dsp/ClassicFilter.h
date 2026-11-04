@@ -48,6 +48,9 @@ public:
         }
 
         opG = g / (1.0f + g);
+        baseG = g;
+        for (int i = 0; i < numStages; ++i)
+            baseK[i] = st[i].k;
 
         // Drive: saturate the input. Makeup keeps a reference-level signal at
         // roughly the same loudness, so turning drive up adds grit/harmonics
@@ -58,6 +61,15 @@ public:
         constexpr float kRef = 0.5f;
         driveMakeup = kRef / softClip (driveGain * kRef);
         driveWet = std::min (1.0f, drive * 8.0f);
+    }
+
+    // Audio-rate cutoff modulation: scale the prewarped cutoff by m (cheap, no tan()).
+    void modulateCutoff (float m) noexcept
+    {
+        g = std::min (baseG * m, 30.0f);
+        for (int i = 0; i < numStages; ++i)
+            setStage (i, baseK[i]);
+        opG = g / (1.0f + g);
     }
 
     void process (float& l, float& r) noexcept
@@ -102,7 +114,8 @@ private:
     float sampleRate = 48000.0f;
     int mode = LP12, numStages = 1;
     bool analog = true;
-    float g = 0.1f, opG = 0.1f;
+    float g = 0.1f, opG = 0.1f, baseG = 0.1f;
+    float baseK[3] { 1.414f, 1.414f, 1.414f };
     float driveGain = 1.0f, driveMakeup = 1.0f, driveWet = 0.0f;
     Stage st[3];
     struct { float s[2] {}; } op;

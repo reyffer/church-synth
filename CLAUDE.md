@@ -24,7 +24,8 @@ ctest --test-dir build --output-on-failure   # DSP tests + plugin state test (ne
 CI (`.github/workflows/build.yml`): macOS universal AU/VST3/Standalone with auval and pluginval (strictness 7); Windows VST3/Standalone with pluginval. The Apple Silicon benchmark is posted to the run summary.
 
 ## Architecture
-- `SynthCore` → 16 `Voice`s → per voice: 2 engine slots (each `AnalogEngine` or `WavetableEngine`) + `UtilityEngine` → filter-mix split → 2 `ClassicFilter`s (series↔parallel) → amp `Envelope` → pan. Utility osc can bypass the filters (post buffer).
+- `SynthCore` → 16 `Voice`s → per voice: 2 engine slots (each `AnalogEngine` or `WavetableEngine`) + `UtilityEngine` → filter-mix split → 2 `MultiFilter`s (15 models incl. `ClassicFilter`; series↔parallel or Split) → amp `Envelope` → pan → buses Main / FX A / FX B / Direct (summed in `SynthCore::renderChunk` until the FX stage). Utility osc can bypass the filters (post buffer → its routed bus).
+- Filter models: `MultiFilter.h` (controls per model documented at the top and in SPEC §4.4). `FilterType` order is append-only. Feedback paths inside filters must stay bounded under audio-rate FM (soft-clip them).
 - Cross-mod: an engine's modulator can be the other engine's pre-volume output; the source engine renders first (mutual cross-mod uses the previous 16-sample block).
 - Content (`Content.h/.cpp`, `ContentFactory.cpp`): 40 wavetables + 34 noises synthesised in code, mip-mapped (11 levels), generated lazily and cached process-wide. The plugin's `Loader` thread resolves selections and user files into atomic pointers; the audio thread only reads pointers.
 - User files are copied to `Documents/Church Synth/Wavetables|Noises` and referenced by file name in the plugin state.
@@ -38,7 +39,7 @@ CI (`.github/workflows/build.yml`): macOS universal AU/VST3/Standalone with auva
 1. ✅ Core voice: Analog engine, Classic filter, amp env, voicing, CI, benchmark.
 2. ✅ Wavetable + Utility engines, cross-mod, generated wavetables/noises, WAV import.
 3. ✅ Modulation system (envs, LFOs, functions, random, combinators, macros, routing, sidechains).
-4. All filter types + Sum/Split routing.
+4. ✅ All filter types + Sum/Split routing.
 5. FX buses and all effects.
 6. Seq/Arp.
 7. Presets/browser + Pigments-style UI (dark only).

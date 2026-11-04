@@ -3,13 +3,22 @@
 #include "AnalogEngine.h"
 #include "UtilityEngine.h"
 #include "WavetableEngine.h"
-#include "ClassicFilter.h"
+#include "MultiFilter.h"
 #include "Envelope.h"
 #include "ModMatrix.h"
 #include "ModSources.h"
 
 namespace cs
 {
+// Output buses a voice writes to. Main = pre-FX sum; FxA / FxB = Split routing or
+// utility osc routed to a bus; Direct = bypasses the FX.
+enum VoiceBus : int { BusMain = 0, BusFxA, BusFxB, BusDirect, NumVoiceBuses };
+struct VoiceOut
+{
+    float* l[NumVoiceBuses];
+    float* r[NumVoiceBuses];
+};
+
 class Voice
 {
 public:
@@ -144,7 +153,7 @@ public:
     // Renders n <= kBlock samples and adds them to outL/outR, after computing
     // this voice's modulation sources and applying the routing.
     void render (const SynthParams& p, const GlobalMod& g, const ModRouting& routing,
-                 float bendSemis, int n, float* outL, float* outR) noexcept
+                 float bendSemis, int n, const VoiceOut& out) noexcept
     {
         if (! active)
             return;
@@ -165,13 +174,13 @@ public:
 
         const float u = srcUnipolar (use->ampModSource);
         ampGain = 1.0f - std::clamp (use->ampVelocity, 0.0f, 1.0f) * (1.0f - u);
-        renderAudio (*use, bendSemis, n, outL, outR);
+        renderAudio (*use, bendSemis, n, out);
     }
 
     float sourceValue (int s) const noexcept { return (s >= 0 && s < NumModSources) ? src[s] : 0.0f; }
 
 private:
-    void renderAudio (const SynthParams& p, float bendSemis, int n, float* outL, float* outR) noexcept
+    void renderAudio (const SynthParams& p, float bendSemis, int n, const VoiceOut& out) noexcept
     {
         // --- pitch / glide (control rate) ----------------------------------
         if (std::abs (pitch - targetPitch) > 0.0f)
@@ -239,18 +248,22 @@ private:
             for (int i = 0; i < kBlock; ++i)
                 prevMod[e][i] = i < n ? modBuf[e][i] : 0.0f;
 
-        if (needFollow)
+        // Utility renders into its own buffers (also used as an FM source and by the follower).
+        float u1L[kBlock] {}, u1R[kBlock] {}, u2L[kBlock] {}, u2R[kBlock] {};
+        utility.render (p.utility, notePitch, fixedPitch, n, u1L, u1R, u2L, u2R, postL, postR);
+        float uPk = 0.0f;
+        for (int i = 0; i < n; ++i)
         {
-            float pre = 0.0f, post = 0.0f;
-            for (int i = 0; i < n; ++i)
-                pre = std::max (pre, std::abs (in1L[i] + in2L[i]));
-            utility.render (p.utility, notePitch, fixedPitch, n, in1L, in1R, in2L, in2R, postL, postR);
-            for (int i = 0; i < n; ++i)
-                post = std::max (post, std::abs (in1L[i] + in2L[i] + postL[i]));
-            followPeak[FollowUtility] = std::max (0.0f, post - pre);
+            in1L[i] += u1L[i];
+            in1R[i] += u1R[i];
+            in2L[i] += u2L[i];
+            in2R[i] += u2R[i];
+            uMono[i] = 0.5f * (u1L[i] + u1R[i] + u2L[i] + u2R[i]) + postL[i];
+            uPk = std::max (uPk, std::abs (uMono[i]));
         }
-        else
-            utility.render (p.utility, notePitch, fixedPitch, n, in1L, in1R, in2L, in2R, postL, postR);
+        followPeak[FollowUtility] = uPk;
+        const int postBus = p.utility.oscRoute == RouteFxA ? BusFxA : p.utility.oscRoute == RouteFxB ? BusFxB
+                          : p.utility.oscRoute == RouteDirect ? BusDirect : BusMain;
 
         // --- filters (coefficients at control rate, cutoff smoothed in log2) ----
         float fGainL[kNumFilters], fGainR[kNumFilters];
@@ -260,14 +273,43 @@ private:
             const float target = std::log2 (cutoffFor (p, f) * std::exp2 (fp.keytrack * (notePitch - 60.0f) / 12.0f));
             cutoffLog[f] += 0.35f * (target - cutoffLog[f]);
             if (fp.on)
-                filt[f].setup (fp.mode, std::exp2 (cutoffLog[f]), fp.reso, fp.drive, fp.analog);
+            {
+                if (fp.type != lastFilterType[f])
+                {
+                    filt[f].reset();
+                    lastFilterType[f] = fp.type;
+                }
+                filt[f].setup (fp, std::exp2 (cutoffLog[f]));
+            }
             float l, r;
             panGains (fp.pan, l, r);
             fGainL[f] = l * fp.volume;
             fGainR[f] = r * fp.volume;
         }
-        const float par = std::clamp (p.filterRouting, 0.0f, 1.0f), ser = 1.0f - par;
+        const bool split = p.filterOutput != RoutingSum;
+        const float par = split ? 1.0f : std::clamp (p.filterRouting, 0.0f, 1.0f), ser = 1.0f - par;
         const bool f1On = p.filter[0].on, f2On = p.filter[1].on;
+        const int busF1 = ! split ? BusMain : p.filterOutput == RoutingSplit ? BusFxA : BusFxB;
+        const int busF2 = ! split ? BusMain : p.filterOutput == RoutingSplit ? BusFxB : BusFxA;
+
+        // Per-sample FM source for each filter.
+        const float* fmSrc[kNumFilters];
+        bool needNoiseFm = false;
+        for (int f = 0; f < kNumFilters; ++f)
+        {
+            const auto& fp = p.filter[(size_t) f];
+            switch (fp.fmSource)
+            {
+                case FmSrcEngine2: fmSrc[f] = modBuf[1]; break;
+                case FmSrcUtility: fmSrc[f] = uMono; break;
+                case FmSrcNoise: fmSrc[f] = noiseFm; needNoiseFm = needNoiseFm || fp.fm > 0.0f; break;
+                case FmSrcEngine1:
+                default: fmSrc[f] = modBuf[0]; break;
+            }
+        }
+        if (needNoiseFm)
+            for (int i = 0; i < n; ++i)
+                noiseFm[i] = modRng.bi();
 
         // --- amp envelope (control-rate points, per-sample interpolation) ----
         const float envNow = env.advance (p.ampEnv, n);
@@ -282,30 +324,42 @@ private:
         {
             float aL = in1L[i], aR = in1R[i];
             if (f1On)
-                filt[0].process (aL, aR);
+                filt[0].process (aL, aR, fmSrc[0][i]);
             aL *= fGainL[0];
             aR *= fGainR[0];
 
             float bL = in2L[i] + ser * aL, bR = in2R[i] + ser * aR;
             if (f2On)
-                filt[1].process (bL, bR);
+                filt[1].process (bL, bR, fmSrc[1][i]);
             bL *= fGainL[1];
             bR *= fGainR[1];
 
-            const float yL = bL + par * aL + postL[i], yR = bR + par * aR + postR[i];
 
             envV += envStep;
             if (stealing)
                 fade = std::max (0.0f, fade + fadeStep);
             const float amp = envV * ampGain * fade;
+            const float gl = amp * vpL, gr = amp * vpR;
+            if (split)
+            {
+                out.l[busF1][i] += aL * gl;
+                out.r[busF1][i] += aR * gr;
+                out.l[busF2][i] += bL * gl;
+                out.r[busF2][i] += bR * gr;
+            }
+            else
+            {
+                out.l[BusMain][i] += (bL + par * aL) * gl;
+                out.r[BusMain][i] += (bR + par * aR) * gr;
+            }
+            out.l[postBus][i] += postL[i] * gl;
+            out.r[postBus][i] += postR[i] * gr;
             if (needFollow)
             {
                 fPk1 = std::max (fPk1, std::abs (aL));
                 fPk2 = std::max (fPk2, std::abs (bL));
-                fPkV = std::max (fPkV, std::abs (yL * amp));
+                fPkV = std::max (fPkV, std::abs ((bL + aL + postL[i]) * amp));
             }
-            outL[i] += yL * amp * vpL;
-            outR[i] += yR * amp * vpR;
         }
         envPrev = envNow;
         if (needFollow)
@@ -548,6 +602,9 @@ public:
     float polyPressure = 0.0f; // set by the SynthCore from poly aftertouch
 
 private:
+    float uMono[kBlock] {}, noiseFm[kBlock] {};
+    int lastFilterType[kNumFilters] { -1, -1 };
+
     AnalogEngine analog[kNumEngines];
     WavetableEngine wavetable[kNumEngines];
     UtilityEngine utility;
@@ -563,7 +620,7 @@ private:
         else
             analog[e].startNote (ep, seed);
     }
-    ClassicFilter filt[kNumFilters];
+    MultiFilter filt[kNumFilters];
     Envelope env;
 
     bool active = false, gate = false, stealing = false, pendingReleased = false;

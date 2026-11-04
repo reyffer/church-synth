@@ -110,6 +110,27 @@ Two identical slots. Each has: type menu (Digital / Analog-modelled groups) with
 
 Analog types accept **audio-rate FM** from the engines' modulators or outputs.
 
+### 4.4 Model controls (as built)
+| Model | Model Mode | Control A | Control B | Control C |
+|---|---|---|---|---|
+| Classic | (uses Type: 17 slopes) | | | |
+| Cluster | 0 Peak, 1 Bandpass, 2 Notch, 3 LP+HP | spread | number of peaks (1–5) | |
+| Phaser | | poles (2–12) | | |
+| Formant | | vowel morph (A-E-I-O-U) | dry/wet blend | |
+| Surgeon | 0 LP, 1 HP, 2 Notch, 3 BP | width (Notch/BP) | | |
+| LoFi | 0 none, 1 pre, 2 post, 3 pre+post filter | jitter | pre-filter offset | post-filter offset |
+| Comb | 0 LP, 1 HP, 2 BP, 3 feed-forward | damping | all-pass (dispersion) | |
+| Drive | 0 Diode, 1 Overdrive, 2 Soft clip, 3 Tape, 4 Transistor | | | |
+| Allpass | 0 Subtle, 1 Medium, 2 Hard | dry level | feedback (−/+) | |
+| Ladder | | | | |
+| Sallen-Key | 0 LP12, 1 HP6 | | | |
+| OTA 4-Pole | 0 LP24, 1 LP12 | | | |
+| SVF Morph | | mode: BP → LP → Notch → HP | | |
+| Multimode | 0 LP24, 1 LP12, 2 BP24, 3 BP12, 4 HP24, 5 HP12, 6 Notch | | | |
+| Lowpass Gate | 0 LPG, 1 VCA, 2 Both | level (open/close) | decay time | |
+
+Cutoff on Formant = formant shift (1 kHz = neutral); on LoFi = sample-rate frequency; on Comb = pitch. Resonance on Phaser = feedback, on Allpass = bandwidth, on Comb = gain. Drive on Drive = amount in the feedback loop, on Allpass = shaper.
+
 ### 4.3 Routing and amp
 - **Filter routing** knob: F1→F2 (series) ↔ F1//F2 (parallel), with a continuous blend.
 - **Sum / Split:** Sum feeds both filters to the FX section. Split sends F1→FX A and F2→FX B (or reversed), parallel only.
@@ -255,5 +276,6 @@ Hold (acts like sustain, also latches seq/arp), Transpose (octave, fine; fine is
 | 2026-11-04 | Pigments layout, our own artwork, dark only. |
 | 2026-11-04 | AU + VST3 (Mac and Windows) from Milestone 1; AU is the live reference. |
 | 2026-11-04 | Milestone 1 done. Standalone opens all MIDI inputs automatically (Windows standalone didn't receive MIDI). |
+| 2026-11-04 | Milestone 4 done: 15 filter models (Classic, Cluster, Phaser, Formant, Surgeon, LoFi, Comb, Drive, Allpass, Ladder, Sallen-Key, OTA 4-Pole, SVF Morph, Multimode, Lowpass Gate), audio-rate filter FM (Engine 1, Engine 2, Utility, Noise), Sum / Split / Split Reversed output. Each filter exposes Model, Model Mode, Cutoff, Resonance, Drive and Controls A/B/C; what A/B/C do per model is listed in §4.4 (the UI milestone labels them per model). Voices now write to Main / FX A / FX B / Direct buses, summed until the FX milestone. |
 | 2026-11-04 | Milestone 3 done: Env 2/3, 3 LFOs, 3 Functions (16 preset shapes), 3 Random (5 types), 3 Combinators (10 types), 4 Macros, 64-route matrix with sidechains, amp mod source, Mod Quantize, aftertouch (channel + poly), CC11, tempo sync. Interim until the UI milestone: functions use preset shapes (drawing editor in M7), keyboard curves are a single bend control (2-point editor in M7), quantize notes are a 12-bit mask (mini-keyboard in M7), routes are edited in a list (drag-and-drop in M7). Filter FM source menu moves to M4 with the filters. |
 | 2026-11-04 | Milestone 2 done: Wavetable + Utility engines, cross-mod, 40 generated wavetables, 34 generated noises, WAV import. Phase-transform shapes are our own set: Pulse Width, Skew, Mirror, Sync, Steps, Bend, Squeeze. Wavetable/noise list order is permanent (append only). |

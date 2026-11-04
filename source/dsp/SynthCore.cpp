@@ -388,8 +388,16 @@ void SynthCore::monoNoteOff (int note) noexcept
 // ---------------------------------------------------------------------------
 void SynthCore::render (float* outL, float* outR, int n) noexcept
 {
-    std::memset (outL, 0, sizeof (float) * (size_t) n);
-    std::memset (outR, 0, sizeof (float) * (size_t) n);
+    // Process in chunks that fit the bus buffers.
+    for (int off = 0; off < n; off += kMaxChunk)
+        renderChunk (outL + off, outR + off, std::min (kMaxChunk, n - off));
+}
+
+void SynthCore::renderChunk (float* outL, float* outR, int n) noexcept
+{
+    for (auto& b : bus)
+        for (auto& ch : b)
+            std::memset (ch, 0, sizeof (float) * (size_t) n);
 
     // Voices above the current polyphony limit are released.
     const int limit = isMono() ? 1 : std::clamp (params.maxVoices, 1, kMaxVoices);
@@ -410,16 +418,23 @@ void SynthCore::render (float* outL, float* outR, int n) noexcept
     {
         const int len = std::min (kBlock, n - pos);
         tickGlobalSources (len, transport.ppq + ppqPerSample * pos);
+        VoiceOut vo;
+        for (int b = 0; b < NumVoiceBuses; ++b)
+        {
+            vo.l[b] = bus[b][0] + pos;
+            vo.r[b] = bus[b][1] + pos;
+        }
         for (auto& v : voices)
-            v.render (params, global, routing, bendSemis, len, outL + pos, outR + pos);
+            v.render (params, global, routing, bendSemis, len, vo);
     }
     transport.ppq += ppqPerSample * n; // keeps free-running sync coherent if the host doesn't update it
 
+    // Until the FX stage exists, every bus goes straight to the output.
     const float g = params.masterVolume * kVoiceGain;
     for (int i = 0; i < n; ++i)
     {
-        outL[i] *= g;
-        outR[i] *= g;
+        outL[i] = (bus[BusMain][0][i] + bus[BusFxA][0][i] + bus[BusFxB][0][i] + bus[BusDirect][0][i]) * g;
+        outR[i] = (bus[BusMain][1][i] + bus[BusFxA][1][i] + bus[BusFxB][1][i] + bus[BusDirect][1][i]) * g;
     }
 }
 } // namespace cs

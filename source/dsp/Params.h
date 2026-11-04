@@ -79,6 +79,17 @@ enum ClassicMode : int
 
 constexpr int kNumChords = 12;
 
+// Filter types. Order is stored in presets: append only.
+enum FilterType : int
+{
+    FilterClassicType = 0, FilterCluster, FilterPhaser, FilterFormant, FilterSurgeon, FilterLoFi,
+    FilterComb, FilterDrive, FilterAllpass,
+    FilterLadder, FilterSallenKey, FilterOta, FilterSvfMorph, FilterMultimode, FilterLpg,
+    FilterTypeCount
+};
+enum FilterFmSource : int { FmSrcEngine1 = 0, FmSrcEngine2, FmSrcUtility, FmSrcNoise, FmSrcCount };
+enum FilterRoutingMode : int { RoutingSum = 0, RoutingSplit, RoutingSplitReversed, RoutingModeCount };
+
 struct OscParams
 {
     int wave = WaveSaw;
@@ -195,6 +206,13 @@ struct FilterParams
     float keytrack = 0.0f;   // 0..1 (1 = cutoff follows pitch fully)
     float volume = 1.0f;
     float pan = 0.0f; // -1..1
+
+    // --- Milestone 4 (kept last so older aggregate initialisers stay valid) ---
+    int type = FilterClassicType;
+    int submode = 0;      // mode within the type (see MultiFilter.h)
+    float a = 0.5f, b = 0.5f, c = 0.5f; // type-specific controls (see MultiFilter.h)
+    float fm = 0.0f;      // audio-rate cutoff modulation depth 0..1
+    int fmSource = FmSrcEngine1;
 };
 
 struct EnvParams
@@ -286,6 +304,7 @@ struct SynthParams
     UtilityParams utility {};
     std::array<FilterParams, kNumFilters> filter {};
     float filterRouting = 0.0f; // 0 = F1 -> F2 (series), 1 = F1 // F2 (parallel)
+    int filterOutput = RoutingSum; // Sum (both filters to the FX input) or Split (F1 -> FX A, F2 -> FX B)
 
     EnvParams ampEnv {};
     float ampVelocity = 0.5f; // Amp Mod amount 0..1 (source = ampModSource)

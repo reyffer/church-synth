@@ -38,7 +38,7 @@ public:
     float voiceSourceValue (int voice, int source) const noexcept { return voices[std::clamp (voice, 0, kMaxVoices - 1)].sourceValue (source); }
     void allNotesOff() noexcept;
 
-    // Renders n samples into outL/outR (overwrites).
+    // Renders n samples into outL/outR (overwrites). All buses are summed (until the FX stage).
     void render (float* outL, float* outR, int n) noexcept;
 
     int activeVoiceCount() const noexcept;
@@ -68,8 +68,11 @@ private:
     void assignVoiceModSteps (Voice& v, int note) noexcept;
     void tickGlobalSources (int n, double blockPpq) noexcept;
     void computeUsedSources() noexcept;
+    void renderChunk (float* outL, float* outR, int n) noexcept;
     bool sustainPedal = false, holdLatched = false;
     float lastPitch = 60.0f;
+    static constexpr int kMaxChunk = 2048;
+    float bus[NumVoiceBuses][2][kMaxChunk] {};
 
     // Mono note stack (most recent last).
     int heldNotes[128] {};

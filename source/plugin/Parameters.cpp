@@ -17,6 +17,11 @@ const juce::StringArray kClassicModes { "Lowpass 6", "Lowpass 12", "Lowpass 24",
                                         "Highpass 6", "Highpass 12", "Highpass 24", "Highpass 36",
                                         "Notch 12", "Notch 24", "Notch 36",
                                         "All Pass 12", "All Pass 24", "All Pass 36" };
+const juce::StringArray kFilterTypes { "Classic", "Cluster", "Phaser", "Formant", "Surgeon", "LoFi", "Comb",
+                                      "Drive", "Allpass", "Ladder", "Sallen-Key", "OTA 4-Pole", "SVF Morph",
+                                      "Multimode", "Lowpass Gate" };
+const juce::StringArray kFilterFmSources { "Engine 1", "Engine 2", "Utility", "Noise" };
+const juce::StringArray kFilterOutputs { "Sum", "Split (F1>FX A, F2>FX B)", "Split Reversed (F1>FX B, F2>FX A)" };
 const juce::StringArray kVoicing { "Mono", "Mono Legato", "Poly Reassign", "Poly Rotate" };
 const juce::StringArray kEngineTypes { "Analog", "Wavetable" };
 const juce::StringArray kFmTypes { "Linear FM", "Exponential FM", "Ring Mod" };
@@ -242,6 +247,15 @@ void addFilter (Builder& b, size_t f)
     b.flt (p + "kbd", n + "Key Track", 0, 1, 0, [f] (SynthParams& s, float v) { s.filter[f].keytrack = v; });
     b.flt (p + "vol", n + "Volume", 0, 1, 1, [f] (SynthParams& s, float v) { s.filter[f].volume = v; });
     b.flt (p + "pan", n + "Pan", -1, 1, 0, [f] (SynthParams& s, float v) { s.filter[f].pan = v; });
+
+    // --- Milestone 4: filter types (control meanings per type: see MultiFilter.h / SPEC) ---
+    b.choice (p + "type", n + "Model", kFilterTypes, FilterClassicType, [f] (SynthParams& s, float v) { s.filter[f].type = asInt (v); });
+    b.integer (p + "submode", n + "Model Mode", 0, 6, 0, [f] (SynthParams& s, float v) { s.filter[f].submode = asInt (v); });
+    b.flt (p + "a", n + "Control A", 0, 1, 0.5f, [f] (SynthParams& s, float v) { s.filter[f].a = v; });
+    b.flt (p + "b", n + "Control B", 0, 1, 0.5f, [f] (SynthParams& s, float v) { s.filter[f].b = v; });
+    b.flt (p + "c", n + "Control C", 0, 1, 0.5f, [f] (SynthParams& s, float v) { s.filter[f].c = v; });
+    b.flt (p + "fm", n + "FM Amount", 0, 1, 0, [f] (SynthParams& s, float v) { s.filter[f].fm = v; });
+    b.choice (p + "fm_src", n + "FM Source", kFilterFmSources, FmSrcEngine1, [f] (SynthParams& s, float v) { s.filter[f].fmSource = asInt (v); });
 }
 
 void addRate (Builder& b, const juce::String& p, const juce::String& n, float defHz, int defDiv,
@@ -373,6 +387,7 @@ std::vector<ParamDef> build()
 
     b.group = "Routing & Amp";
     b.flt ("f_routing", "Filter Routing Ser/Par", 0, 1, 0, [] (SynthParams& s, float v) { s.filterRouting = v; });
+    b.choice ("f_output", "Filter Output Sum/Split", kFilterOutputs, RoutingSum, [] (SynthParams& s, float v) { s.filterOutput = asInt (v); });
     b.flt ("amp_velo", "Amp Mod Amount", 0, 1, 0.5f, [] (SynthParams& s, float v) { s.ampVelocity = v; });
     b.flt ("voice_pan", "Voice Pan", -1, 1, 0, [] (SynthParams& s, float v) { s.voicePan = v; });
     b.choice ("amp_mod_src", "Amp Mod Source", sourceNames(), SrcVelocity, [] (SynthParams& s, float v) { s.ampModSource = asInt (v); });

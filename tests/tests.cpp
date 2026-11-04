@@ -691,8 +691,132 @@ static void testModulatedPatchSane()
     CHECK (st.finite && st.peak < 2.0f && st.rms > 0.01f, "modulated pad renders sanely");
 }
 
+// --- Milestone 4: filters ----------------------------------------------------
+
+static void testAllFilterTypesStable()
+{
+    for (int type = 0; type < FilterTypeCount; ++type)
+        for (int sub = 0; sub < 7; ++sub)
+            for (float reso : { 0.0f, 1.0f })
+                for (float drive : { 0.0f, 1.0f })
+                    for (float fm : { 0.0f, 0.8f })
+                    {
+                        if (type == FilterClassicType && sub > 0)
+                            continue; // classic slopes are covered by testFiltersStable
+                        SynthCore s;
+                        s.setSampleRate (48000.0f);
+                        auto& e = s.params.engine[0];
+                        e.noiseVolume = 0.5f;
+                        auto& f = s.params.filter[0];
+                        f.type = type;
+                        f.submode = sub;
+                        f.reso = reso;
+                        f.drive = drive;
+                        f.fm = fm;
+                        f.fmSource = sub % FmSrcCount;
+                        f.a = 0.3f + 0.1f * (float) sub;
+                        f.b = 0.7f;
+                        f.c = 0.4f;
+                        s.noteOn (40, 1.0f);
+                        Stats worst;
+                        for (int k = 0; k < 16; ++k)
+                        {
+                            f.cutoff = 20.0f * std::pow (1000.0f, (float) k / 15.0f);
+                            const auto st = renderStats (s, 1200);
+                            worst.finite = worst.finite && st.finite;
+                            worst.peak = std::max (worst.peak, st.peak);
+                        }
+                        char msg[160];
+                        std::snprintf (msg, sizeof msg, "filter type %d sub %d reso %.0f drive %.0f fm %.1f", type, sub, reso, drive, fm);
+                        CHECK (worst.finite, msg);
+                        CHECK (worst.peak < 8.0f, msg);
+                    }
+}
+
+// Level of white noise (low-pass test) or a low saw (high-pass test) through one filter setting.
+static float filteredLevelDb (int type, int sub, float a, float cutoff, bool noise)
+{
+    SynthCore s;
+    s.setSampleRate (48000.0f);
+    auto& e = s.params.engine[0];
+    if (noise)
+    {
+        e.osc[0].volume = 0.0f;
+        e.noiseVolume = 1.0f;
+    }
+    auto& f = s.params.filter[0];
+    f.type = type;
+    f.submode = sub;
+    f.a = a;
+    f.cutoff = cutoff;
+    f.reso = 0.1f;
+    s.noteOn (36, 1.0f);
+    renderStats (s, 4800);
+    return 20.0f * std::log10 (renderStats (s, 24000).rms + 1.0e-9f);
+}
+
+static void testFilterResponses()
+{
+    struct Case { int type, sub; float a; bool lowpass; const char* name; };
+    const Case cases[] = {
+        { FilterLadder, 0, 0.5f, true, "Ladder" },
+        { FilterSallenKey, 0, 0.5f, true, "Sallen-Key LP" },
+        { FilterOta, 0, 0.5f, true, "OTA LP24" },
+        { FilterOta, 1, 0.5f, true, "OTA LP12" },
+        { FilterMultimode, 0, 0.5f, true, "Multimode LP24" },
+        { FilterMultimode, 4, 0.5f, false, "Multimode HP24" },
+        { FilterMultimode, 5, 0.5f, false, "Multimode HP12" },
+        { FilterSvfMorph, 0, 0.1f, true, "SVF Morph LP" },
+        { FilterSvfMorph, 0, 1.0f, false, "SVF Morph HP" },
+        { FilterSurgeon, 0, 0.5f, true, "Surgeon LP" },
+        { FilterSurgeon, 1, 0.5f, false, "Surgeon HP" },
+        { FilterDrive, 1, 0.5f, true, "Drive" },
+        { FilterSallenKey, 1, 0.5f, false, "Sallen-Key HP" },
+    };
+    for (const auto& c : cases)
+    {
+        // Low-pass: noise is much quieter at a low cutoff. High-pass: a low saw is much quieter at a high cutoff.
+        const float lo = filteredLevelDb (c.type, c.sub, c.a, 300.0f, c.lowpass);
+        const float hi = filteredLevelDb (c.type, c.sub, c.a, 8000.0f, c.lowpass);
+        char msg[128];
+        std::snprintf (msg, sizeof msg, "%s filters in the right direction (%.1f vs %.1f dB)", c.name, lo, hi);
+        CHECK (c.lowpass ? hi - lo > 8.0f : lo - hi > 8.0f, msg);
+    }
+}
+
+static void testLowpassGateCloses()
+{
+    for (int sub = 0; sub < 3; ++sub)
+    {
+        const float open = filteredLevelDb (FilterLpg, sub, 1.0f, 1000.0f, true);
+        const float closed = filteredLevelDb (FilterLpg, sub, 0.0f, 1000.0f, true);
+        CHECK (open - closed > 20.0f, "lowpass gate closes at level 0");
+    }
+}
+
+static void testSplitRoutingKeepsBothFilters()
+{
+    // Split sends F1 and F2 to separate buses; summed output must still contain both.
+    for (int mode = 0; mode < RoutingModeCount; ++mode)
+    {
+        SynthCore s;
+        s.setSampleRate (48000.0f);
+        s.params.filterOutput = mode;
+        s.params.filter[1].on = true;
+        s.params.engine[0].filterMix = 0.5f;
+        s.noteOn (60, 1.0f);
+        renderStats (s, 2400);
+        const auto st = renderStats (s, 24000);
+        CHECK (st.finite && st.rms > 0.02f, "filter output routing renders");
+    }
+}
+
 int main()
 {
+    testAllFilterTypesStable();
+    testFilterResponses();
+    testLowpassGateCloses();
+    testSplitRoutingKeepsBothFilters();
     testLfoBasics();
     testFunctionsAndPresets();
     testRandomGenerators();
