@@ -20,6 +20,22 @@ public:
     void setSustain (bool down) noexcept;
     void setPitchBend (float normalised) noexcept { bend = std::clamp (normalised, -1.0f, 1.0f); } // -1..1
     void setModWheel (float v) noexcept { modWheel = v; }
+    void setChannelPressure (float v) noexcept { channelPressure = v; }
+    void setPolyPressure (int note, float v) noexcept;
+    void setExpression (float v) noexcept { expression = v; }
+    void setTransport (const Transport& t) noexcept { transport = t; }
+
+    // Copies and prepares a routing table (cheap; call when it changes).
+    void setRouting (const ModRouting& r) noexcept
+    {
+        routing = r;
+        routing.prepare();
+    }
+    const ModRouting& getRouting() const noexcept { return routing; }
+
+    // Current value of a source on the most recently started voice (for UI/tests).
+    float debugSourceValue (int source) const noexcept;
+    float voiceSourceValue (int voice, int source) const noexcept { return voices[std::clamp (voice, 0, kMaxVoices - 1)].sourceValue (source); }
     void allNotesOff() noexcept;
 
     // Renders n samples into outL/outR (overwrites).
@@ -33,7 +49,25 @@ private:
     uint64_t stamp = 0;
     uint32_t seedCounter = 12345u;
     int rotateIndex = 0;
-    float bend = 0.0f, modWheel = 0.0f;
+    float bend = 0.0f, modWheel = 0.0f, channelPressure = 0.0f, expression = 0.0f;
+    Transport transport;
+    ModRouting routing;
+
+    // Global (shared) instances for generators in Mono / Legato / Free-running modes.
+    Lfo gLfo[kNumLfos];
+    FunctionGen gFunc[kNumFuncs];
+    RandomGen gRand[kNumRandoms];
+    Rng gRng;
+    GlobalMod global;
+    bool monoTrigger = false, legatoTrigger = false;
+    int lastStarted = 0;
+
+    // Voice Modulator bookkeeping.
+    int vmCounter[kNumRandoms] {};
+    int vmNoteStep[kNumRandoms][128];
+    void assignVoiceModSteps (Voice& v, int note) noexcept;
+    void tickGlobalSources (int n, double blockPpq) noexcept;
+    void computeUsedSources() noexcept;
     bool sustainPedal = false, holdLatched = false;
     float lastPitch = 60.0f;
 

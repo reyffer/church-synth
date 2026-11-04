@@ -31,6 +31,37 @@ enum ModWave : int { ModSine = 0, ModTriangle, ModSaw, ModRamp, ModSquare,
                      ModBlueNoise, ModWhiteNoise, ModPinkNoise, ModRedNoise, ModRumble, ModWaveCount };
 enum OscRoute : int { RouteFilters = 0, RouteFxA, RouteFxB, RouteDirect, RouteCount };
 
+// --- Modulation -------------------------------------------------------------
+// Source order is stored by name in presets; keep names stable.
+enum ModSource : int
+{
+    SrcVelocity = 0, SrcAftertouch, SrcModWheel, SrcKeytrack, SrcExpression,
+    SrcEnvAmp, SrcEnv2, SrcEnv3,
+    SrcLfo1, SrcLfo2, SrcLfo3,
+    SrcFunc1, SrcFunc2, SrcFunc3,
+    SrcRand1, SrcRand2, SrcRand3,
+    SrcComb1, SrcComb2, SrcComb3,
+    SrcMacro1, SrcMacro2, SrcMacro3, SrcMacro4,
+    NumModSources
+};
+
+// What restarts an LFO / function / random generator.
+enum Retrig : int { RetrigPolyKbd = 0, RetrigMonoKbd, RetrigLegatoKbd, RetrigFreeRun,
+                    RetrigLfo1, RetrigLfo2, RetrigLfo3, RetrigSourceCount };
+// What restarts Env 2 / Env 3.
+enum EnvRetrig : int { EnvRetrigPolyKbd = 0, EnvRetrigLegatoKbd, EnvRetrigLfo1, EnvRetrigLfo2, EnvRetrigLfo3, EnvRetrigCount };
+
+enum LfoWave : int { LfoSine = 0, LfoTriangle, LfoSquare, LfoSaw, LfoRamp, LfoSampleHold, LfoWaveCount };
+enum FuncMode : int { FuncLoop = 0, FuncOneShot, FuncEnvelope, FuncEnvLoop, FuncModeCount };
+enum RandomType : int { RandRandom = 0, RandVoiceMod, RandSampleHold, RandTuring, RandBinary, RandTypeCount };
+enum VoiceModMode : int { VmCycle = 0, VmReassign, VmRandom, VmModeCount };
+enum CombType : int { CombSum = 0, CombDiff, CombMultiply, CombDivide, CombCrossfade, CombLag,
+                      CombThreshold, CombOffset, CombRemap, CombEnvFollow, CombTypeCount };
+enum FollowInput : int { FollowEngine1 = 0, FollowEngine2, FollowUtility, FollowFilter1, FollowFilter2, FollowVoice, FollowInputCount };
+
+constexpr int kNumSyncDivs = 19;
+constexpr int kNumLfos = 3, kNumFuncs = 3, kNumRandoms = 3, kNumCombs = 3;
+
 class Wavetable;   // see Content.h
 class NoiseSample; // see Content.h
 
@@ -178,6 +209,77 @@ struct EnvParams
     bool releaseLink = false;
 };
 
+struct RateParams
+{
+    float hz = 1.0f;
+    bool sync = false;
+    int div = 7; // index into the sync division table (1/4 by default)
+};
+
+struct LfoParams
+{
+    int wave = LfoSine;
+    float symmetry = 0.5f;
+    RateParams rate {};
+    float phase = 0.0f;    // 0..1 start phase
+    float keytrack = 0.0f; // -2..2: rate follows the played note
+    float fade = 0.0f;     // seconds to fade in after a (re)trigger
+    float smooth = 0.0f;   // seconds of output smoothing
+    int retrig = RetrigPolyKbd;
+    bool bipolar = true;
+};
+
+struct FunctionShape; // see ModSources.h
+
+struct FunctionParams
+{
+    const FunctionShape* shape = nullptr; // set by the host layer
+    RateParams rate {};
+    int mode = FuncLoop;
+    int retrig = RetrigPolyKbd;
+    bool bipolar = false;
+    float smooth = 0.0f; // seconds
+    float scale = 1.0f;  // -1..1
+};
+
+struct RandomParams
+{
+    int type = RandRandom;
+    RateParams rate { 4.0f, false, 10 };
+    float smooth = 0.0f;   // 0..1 of a step
+    float distance = 1.0f; // 0..1
+    float jitter = 0.0f;   // 0..1
+    bool bipolar = true;
+    int retrig = RetrigFreeRun;
+    int vmVoices = 8;
+    int vmMode = VmCycle;
+    std::array<float, 8> vmSteps { 0.6f, -0.3f, 0.9f, -0.8f, 0.2f, -0.5f, 0.4f, -0.1f };
+    int shSource = -1; // -1 = internal noise, otherwise a ModSource
+    float shRise = 0.0f, shFall = 0.0f; // seconds
+    bool shLink = true;
+    float flip = 0.0f; // Turing
+    int length = 8;    // Turing
+    float probability = 0.5f, correlation = 0.0f; // Binary
+};
+
+struct CombParams
+{
+    int type = CombSum;
+    int source = SrcLfo1;
+    int mod = SrcLfo2;
+    float amount = 0.5f;
+    int remapShape = 0;
+    int followInput = FollowVoice;
+    float followGain = 1.0f;      // input gain (linear, 0..4)
+    float followThreshold = 0.0f; // 0..1
+    float followAttack = 0.01f, followRelease = 0.2f; // seconds
+};
+
+struct KeyCurves
+{
+    float velocity = 0.0f, aftertouch = 0.0f, keytrack = 0.0f; // -1..1, 0 = linear
+};
+
 struct SynthParams
 {
     std::array<EngineParams, kNumEngines> engine {};
@@ -186,7 +288,8 @@ struct SynthParams
     float filterRouting = 0.0f; // 0 = F1 -> F2 (series), 1 = F1 // F2 (parallel)
 
     EnvParams ampEnv {};
-    float ampVelocity = 0.5f; // 0..1, how much velocity scales the output level
+    float ampVelocity = 0.5f; // Amp Mod amount 0..1 (source = ampModSource)
+    int ampModSource = SrcVelocity;
     float voicePan = 0.0f;
 
     int voicing = VoicingPolyRotate;
@@ -201,7 +304,19 @@ struct SynthParams
 
     float masterVolume = 0.8f;
 
-    std::array<float, 4> macro {}; // reserved for the modulation milestone
+    std::array<float, 4> macro {};
+
+    // --- Modulation sources -------------------------------------------------
+    EnvParams env2 { 0.002f, 0.5f, 0.0f, 0.4f, 0.0f, 8.0f, false, false };
+    EnvParams env3 { 0.002f, 0.5f, 0.0f, 0.4f, 0.0f, 8.0f, false, false };
+    int env2Retrig = EnvRetrigPolyKbd, env3Retrig = EnvRetrigPolyKbd;
+    std::array<LfoParams, kNumLfos> lfo {};
+    std::array<FunctionParams, kNumFuncs> func {};
+    std::array<RandomParams, kNumRandoms> random {};
+    std::array<CombParams, kNumCombs> comb {};
+    KeyCurves curves {};
+    std::array<int, kNumEngines> coarseQuantMask { 0xFFF, 0xFFF }; // allowed intervals when Coarse is modulated
+    int utilityQuantMask = 0xFFF;
 
     SynthParams()
     {

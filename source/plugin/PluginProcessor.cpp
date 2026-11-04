@@ -230,6 +230,85 @@ void ChurchSynthProcessor::storeUserNamesInState()
 }
 
 // ---------------------------------------------------------------------------
+cs::ModRouting ChurchSynthProcessor::getRoutes() const
+{
+    const juce::ScopedLock sl (routeLock);
+    return routesEdit;
+}
+
+void ChurchSynthProcessor::setRoutes (const cs::ModRouting& r)
+{
+    {
+        const juce::ScopedLock sl (routeLock);
+        routesEdit = r;
+    }
+    publishRoutes (r);
+}
+
+void ChurchSynthProcessor::publishRoutes (const cs::ModRouting& r)
+{
+    const juce::ScopedLock sl (routeLock); // one writer at a time
+    routeSeq.fetch_add (1, std::memory_order_acq_rel); // odd: writing
+    std::atomic_thread_fence (std::memory_order_release);
+    routesShared = r;
+    std::atomic_thread_fence (std::memory_order_release);
+    routeSeq.fetch_add (1, std::memory_order_acq_rel); // even: stable
+}
+
+void ChurchSynthProcessor::pullRoutes() noexcept
+{
+    const uint32_t s1 = routeSeq.load (std::memory_order_acquire);
+    if (s1 == routeSeqSeen || (s1 & 1u) != 0)
+        return;
+    routesAudio = routesShared;
+    std::atomic_thread_fence (std::memory_order_acquire);
+    if (routeSeq.load (std::memory_order_acquire) != s1)
+        return; // a write raced us: try again next block
+    synth.setRouting (routesAudio);
+    routeSeqSeen = s1;
+}
+
+juce::ValueTree ChurchSynthProcessor::routesToTree (const cs::ModRouting& r)
+{
+    juce::ValueTree t ("ROUTES");
+    const auto& dests = cs::modDestinations();
+    for (int i = 0; i < r.count; ++i)
+    {
+        const auto& rt = r.routes[i];
+        if (rt.source < 0 || rt.dest < 0 || rt.dest >= (int) dests.size())
+            continue;
+        juce::ValueTree e ("ROUTE");
+        e.setProperty ("src", cs::modSourceName (rt.source), nullptr);
+        e.setProperty ("dest", dests[(size_t) rt.dest].id, nullptr);
+        e.setProperty ("amt", rt.amount, nullptr);
+        e.setProperty ("sc", rt.sidechain >= 0 ? juce::String (cs::modSourceName (rt.sidechain)) : juce::String(), nullptr);
+        e.setProperty ("sca", rt.scAmount, nullptr);
+        t.appendChild (e, nullptr);
+    }
+    return t;
+}
+
+cs::ModRouting ChurchSynthProcessor::routesFromTree (const juce::ValueTree& t)
+{
+    cs::ModRouting r;
+    for (const auto& e : t)
+    {
+        if (r.count >= cs::kMaxRoutes)
+            break;
+        cs::ModRoute rt;
+        rt.source = cs::findModSource (e["src"].toString().toStdString());
+        rt.dest = cs::findModDest (e["dest"].toString().toStdString());
+        rt.amount = juce::jlimit (-1.0f, 1.0f, (float) e["amt"]);
+        const auto sc = e["sc"].toString();
+        rt.sidechain = sc.isEmpty() ? -1 : cs::findModSource (sc.toStdString());
+        rt.scAmount = e.hasProperty ("sca") ? juce::jlimit (0.0f, 1.0f, (float) e["sca"]) : 1.0f;
+        if (rt.source >= 0 && rt.dest >= 0) // unknown sources/destinations are dropped, not crashed on
+            r.routes[r.count++] = rt;
+    }
+    return r;
+}
+
+// ---------------------------------------------------------------------------
 void ChurchSynthProcessor::handleMidi (const juce::MidiMessage& m) noexcept
 {
     if (m.isNoteOn())
@@ -244,6 +323,12 @@ void ChurchSynthProcessor::handleMidi (const juce::MidiMessage& m) noexcept
         synth.setSustain (false);
     else if (m.isControllerOfType (1))
         synth.setModWheel ((float) m.getControllerValue() / 127.0f);
+    else if (m.isControllerOfType (11))
+        synth.setExpression ((float) m.getControllerValue() / 127.0f);
+    else if (m.isChannelPressure())
+        synth.setChannelPressure ((float) m.getChannelPressureValue() / 127.0f);
+    else if (m.isAftertouch())
+        synth.setPolyPressure (m.getNoteNumber(), (float) m.getAfterTouchValue() / 127.0f);
     else if (m.isAllNotesOff() || m.isAllSoundOff())
         synth.allNotesOff();
 }
@@ -252,6 +337,17 @@ void ChurchSynthProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
 {
     juce::ScopedNoDenormals noDenormals;
     pullParameters();
+    pullRoutes();
+
+    if (auto* ph = getPlayHead())
+        if (const auto pos = ph->getPosition())
+        {
+            cs::Transport t;
+            t.bpm = pos->getBpm().orFallback (120.0);
+            t.ppq = pos->getPpqPosition().orFallback (0.0);
+            t.playing = pos->getIsPlaying() && pos->getPpqPosition().hasValue();
+            synth.setTransport (t);
+        }
 
     const int numSamples = buffer.getNumSamples();
     float* left = buffer.getWritePointer (0);
@@ -288,7 +384,12 @@ juce::AudioProcessorEditor* ChurchSynthProcessor::createEditor()
 void ChurchSynthProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = apvts.copyState();
-    state.setProperty ("stateVersion", 2, nullptr);
+    state.setProperty ("stateVersion", 3, nullptr);
+    {
+        const juce::ScopedLock sl (routeLock);
+        state.removeChild (state.getChildWithName ("ROUTES"), nullptr);
+        state.appendChild (routesToTree (routesEdit), nullptr);
+    }
     {
         const juce::ScopedLock sl (contentLock);
         for (int slot = 0; slot < NumContentSlots; ++slot)
@@ -309,7 +410,9 @@ void ChurchSynthProcessor::setStateInformation (const void* data, int sizeInByte
                 for (int slot = 0; slot < NumContentSlots; ++slot)
                     userFile[slot] = tree.getProperty (kSlotStateKey[slot]).toString();
             }
+            const auto routes = routesFromTree (tree.getChildWithName ("ROUTES"));
             apvts.replaceState (tree);
+            setRoutes (routes);
             refreshContent(); // resolve now so an offline bounce starts with the right sound
         }
 }

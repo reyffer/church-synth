@@ -18,7 +18,7 @@ Read SPEC.md first: it is the source of truth for features and holds the decisio
 ```
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release   # add -DFETCHCONTENT_SOURCE_DIR_JUCE=<path> to reuse a local JUCE
 cmake --build build
-ctest --test-dir build --output-on-failure
+ctest --test-dir build --output-on-failure   # DSP tests + plugin state test (needs a display on Linux: xvfb-run)
 ./build/cs_bench [renders_dir]
 ```
 CI (`.github/workflows/build.yml`): macOS universal AU/VST3/Standalone with auval and pluginval (strictness 7); Windows VST3/Standalone with pluginval. The Apple Silicon benchmark is posted to the run summary.
@@ -28,6 +28,8 @@ CI (`.github/workflows/build.yml`): macOS universal AU/VST3/Standalone with auva
 - Cross-mod: an engine's modulator can be the other engine's pre-volume output; the source engine renders first (mutual cross-mod uses the previous 16-sample block).
 - Content (`Content.h/.cpp`, `ContentFactory.cpp`): 40 wavetables + 34 noises synthesised in code, mip-mapped (11 levels), generated lazily and cached process-wide. The plugin's `Loader` thread resolves selections and user files into atomic pointers; the audio thread only reads pointers.
 - User files are copied to `Documents/Church Synth/Wavetables|Noises` and referenced by file name in the plugin state.
+- Modulation (`ModSources.h/.cpp`, `ModMatrix.h/.cpp`): per control block each voice computes only the sources something uses (`GlobalMod::used`), copies `SynthParams` into `local`, adds route offsets in each destination's normalised (knob) space, then renders with `local`. LFO/Function/Random in Mono/Legato/Free-running retrig use a single global instance in `SynthCore`; Poly Kbd uses per-voice instances. Source *settings* (e.g. LFO rate) read last block's modulated values.
+- Destinations use host parameter IDs; routes are saved by source name + destination ID in the plugin state (`ROUTES` child) and handed to the audio thread through a seqlock. Function/remap preset lists and sync divisions are append-only.
 - Control rate = 16 samples (pitch, filter coefficients, envelope points); audio rate for oscillators, FM and filtering.
 - Oscillators use polyBLEP/polyBLAMP with one sample of latency, so hard sync is band-limited exactly.
 - Voice stealing does a 3 ms fade before the new note starts. Retriggering a sounding voice never resets oscillator phase.
@@ -35,7 +37,7 @@ CI (`.github/workflows/build.yml`): macOS universal AU/VST3/Standalone with auva
 ## Milestones (SPEC §9)
 1. ✅ Core voice: Analog engine, Classic filter, amp env, voicing, CI, benchmark.
 2. ✅ Wavetable + Utility engines, cross-mod, generated wavetables/noises, WAV import.
-3. Modulation system (envs, LFOs, functions, random, combinators, macros, routing, sidechains).
+3. ✅ Modulation system (envs, LFOs, functions, random, combinators, macros, routing, sidechains).
 4. All filter types + Sum/Split routing.
 5. FX buses and all effects.
 6. Seq/Arp.

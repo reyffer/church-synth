@@ -1,6 +1,8 @@
 #include "Parameters.h"
 
 #include "dsp/Content.h"
+#include "dsp/ModMatrix.h"
+#include "dsp/ModSources.h"
 
 namespace cs
 {
@@ -26,6 +28,38 @@ const juce::StringArray kModWaves { "Sine", "Triangle", "Saw", "Ramp", "Square",
                                     "Blue Noise", "White Noise", "Pink Noise", "Red Noise", "Rumble" };
 const juce::StringArray kNoisePhase { "Key", "Random" };
 const juce::StringArray kRoutes { "Filters", "FX A", "FX B", "Direct" };
+
+const juce::StringArray kRetrigNames { "Poly Kbd", "Mono Kbd", "Legato Kbd", "Free Running", "LFO 1", "LFO 2", "LFO 3" };
+const juce::StringArray kEnvRetrigNames { "Poly Kbd", "Legato Kbd", "LFO 1", "LFO 2", "LFO 3" };
+const juce::StringArray kLfoWaves { "Sine", "Triangle", "Square", "Saw", "Ramp", "Sample & Hold" };
+const juce::StringArray kFuncModes { "Loop", "One-Shot", "Envelope", "Envelope Loop" };
+const juce::StringArray kRandomTypes { "Random", "Voice Modulator", "Sample & Hold", "Turing", "Binary" };
+const juce::StringArray kVmModes { "Cycle", "Reassign", "Random" };
+const juce::StringArray kCombTypes { "Sum", "Difference", "Multiply", "Divide", "Crossfade", "Lag",
+                                     "Threshold", "Offset", "Remap", "Envelope Follower" };
+const juce::StringArray kFollowInputs { "Engine 1", "Engine 2", "Utility", "Filter 1", "Filter 2", "Voice Out" };
+
+juce::StringArray sourceNames()
+{
+    juce::StringArray a;
+    for (int i = 0; i < NumModSources; ++i)
+        a.add (modSourceName (i));
+    return a;
+}
+juce::StringArray syncDivNames()
+{
+    juce::StringArray a;
+    for (const auto& d : kSyncDivs)
+        a.add (d.name);
+    return a;
+}
+juce::StringArray presetNames (bool remap)
+{
+    juce::StringArray a;
+    for (int i = 0; i < (remap ? kNumRemapShapes : kNumFunctionPresets); ++i)
+        a.add (remap ? remapShapeName (i) : functionPresetName (i));
+    return a;
+}
 
 juce::StringArray factoryNames (bool wavetables)
 {
@@ -210,6 +244,117 @@ void addFilter (Builder& b, size_t f)
     b.flt (p + "pan", n + "Pan", -1, 1, 0, [f] (SynthParams& s, float v) { s.filter[f].pan = v; });
 }
 
+void addRate (Builder& b, const juce::String& p, const juce::String& n, float defHz, int defDiv,
+              std::function<RateParams& (SynthParams&)> rate)
+{
+    b.flt (p + "_rate", n + " Rate", 0.01f, 50, defHz, [rate] (SynthParams& s, float v) { rate (s).hz = v; }, "Hz", 2.0f);
+    b.boolean (p + "_sync", n + " Sync", false, [rate] (SynthParams& s, float v) { rate (s).sync = asBool (v); });
+    b.choice (p + "_div", n + " Sync Division", syncDivNames(), defDiv, [rate] (SynthParams& s, float v) { rate (s).div = asInt (v); });
+}
+
+void addEnvelope (Builder& b, const juce::String& p, const juce::String& n, std::function<EnvParams& (SynthParams&)> env,
+                  std::function<int& (SynthParams&)> retrig)
+{
+    b.flt (p + "_a", n + " Attack", 0.001f, 20, 0.002f, [env] (SynthParams& s, float v) { env (s).attack = v; }, "s", 0.5f);
+    b.flt (p + "_d", n + " Decay", 0.001f, 20, 0.5f, [env] (SynthParams& s, float v) { env (s).decay = v; }, "s", 0.8f);
+    b.flt (p + "_s", n + " Sustain", 0, 1, 0, [env] (SynthParams& s, float v) { env (s).sustain = v; });
+    b.flt (p + "_r", n + " Release", 0.001f, 20, 0.4f, [env] (SynthParams& s, float v) { env (s).release = v; }, "s", 0.8f);
+    b.flt (p + "_acurve", n + " Att Curve", -20, 20, 0, [env] (SynthParams& s, float v) { env (s).attCurve = v; });
+    b.flt (p + "_dcurve", n + " Dec Curve", -20, 20, 8, [env] (SynthParams& s, float v) { env (s).decCurve = v; });
+    b.boolean (p + "_adr", n + " ADR Mode", false, [env] (SynthParams& s, float v) { env (s).adr = asBool (v); });
+    b.boolean (p + "_link", n + " Release Link", false, [env] (SynthParams& s, float v) { env (s).releaseLink = asBool (v); });
+    b.choice (p + "_retrig", n + " Retrig Source", kEnvRetrigNames, EnvRetrigPolyKbd, [retrig] (SynthParams& s, float v) { retrig (s) = asInt (v); });
+}
+
+void addModulation (Builder& b)
+{
+    b.group = "Envelopes 2 & 3";
+    addEnvelope (b, "env2", "Env 2", [] (SynthParams& s) -> EnvParams& { return s.env2; }, [] (SynthParams& s) -> int& { return s.env2Retrig; });
+    addEnvelope (b, "env3", "Env 3", [] (SynthParams& s) -> EnvParams& { return s.env3; }, [] (SynthParams& s) -> int& { return s.env3Retrig; });
+
+    b.group = "LFOs";
+    for (size_t k = 0; k < (size_t) kNumLfos; ++k)
+    {
+        const juce::String p = "lfo" + juce::String ((int) k + 1), n = "LFO " + juce::String ((int) k + 1);
+        b.choice (p + "_wave", n + " Wave", kLfoWaves, LfoSine, [k] (SynthParams& s, float v) { s.lfo[k].wave = asInt (v); });
+        b.flt (p + "_sym", n + " Symmetry", 0, 1, 0.5f, [k] (SynthParams& s, float v) { s.lfo[k].symmetry = v; });
+        addRate (b, p, n, 1.0f, 7, [k] (SynthParams& s) -> RateParams& { return s.lfo[k].rate; });
+        b.flt (p + "_phase", n + " Phase", 0, 360, 0, [k] (SynthParams& s, float v) { s.lfo[k].phase = v / 360.0f; }, "deg");
+        b.flt (p + "_kbd", n + " Key Track", -2, 2, 0, [k] (SynthParams& s, float v) { s.lfo[k].keytrack = v; });
+        b.flt (p + "_fade", n + " Fade", 0, 20, 0, [k] (SynthParams& s, float v) { s.lfo[k].fade = v; }, "s", 2.0f);
+        b.flt (p + "_smooth", n + " Smooth", 0, 4, 0, [k] (SynthParams& s, float v) { s.lfo[k].smooth = v; }, "s", 0.5f);
+        b.choice (p + "_retrig", n + " Retrig Source", kRetrigNames, RetrigPolyKbd, [k] (SynthParams& s, float v) { s.lfo[k].retrig = asInt (v); });
+        b.boolean (p + "_bipolar", n + " Bipolar", true, [k] (SynthParams& s, float v) { s.lfo[k].bipolar = asBool (v); });
+    }
+
+    b.group = "Functions";
+    for (size_t k = 0; k < (size_t) kNumFuncs; ++k)
+    {
+        const juce::String p = "func" + juce::String ((int) k + 1), n = "Function " + juce::String ((int) k + 1);
+        b.choice (p + "_shape", n + " Shape", presetNames (false), (int) k == 0 ? 2 : (int) k == 1 ? 6 : 13,
+                  [k] (SynthParams& s, float v) { s.func[k].shape = &functionPreset (asInt (v)); });
+        addRate (b, p, n, 1.0f, 3, [k] (SynthParams& s) -> RateParams& { return s.func[k].rate; });
+        b.choice (p + "_mode", n + " Mode", kFuncModes, FuncLoop, [k] (SynthParams& s, float v) { s.func[k].mode = asInt (v); });
+        b.choice (p + "_retrig", n + " Retrig Source", kRetrigNames, RetrigPolyKbd, [k] (SynthParams& s, float v) { s.func[k].retrig = asInt (v); });
+        b.boolean (p + "_bipolar", n + " Bipolar", false, [k] (SynthParams& s, float v) { s.func[k].bipolar = asBool (v); });
+        b.flt (p + "_smooth", n + " Smooth", 0, 1, 0, [k] (SynthParams& s, float v) { s.func[k].smooth = v; }, "s", 0.2f);
+        b.flt (p + "_scale", n + " Scale", -1, 1, 1, [k] (SynthParams& s, float v) { s.func[k].scale = v; });
+    }
+
+    b.group = "Random";
+    for (size_t k = 0; k < (size_t) kNumRandoms; ++k)
+    {
+        const juce::String p = "rand" + juce::String ((int) k + 1), n = "Random " + juce::String ((int) k + 1);
+        b.choice (p + "_type", n + " Type", kRandomTypes, RandRandom, [k] (SynthParams& s, float v) { s.random[k].type = asInt (v); });
+        addRate (b, p, n, 4.0f, 10, [k] (SynthParams& s) -> RateParams& { return s.random[k].rate; });
+        b.flt (p + "_smooth", n + " Smooth", 0, 1, 0, [k] (SynthParams& s, float v) { s.random[k].smooth = v; });
+        b.flt (p + "_dist", n + " Distance", 0, 1, 1, [k] (SynthParams& s, float v) { s.random[k].distance = v; });
+        b.flt (p + "_jitter", n + " Jitter", 0, 1, 0, [k] (SynthParams& s, float v) { s.random[k].jitter = v; });
+        b.boolean (p + "_bipolar", n + " Bipolar", true, [k] (SynthParams& s, float v) { s.random[k].bipolar = asBool (v); });
+        b.choice (p + "_retrig", n + " Retrig Source", kRetrigNames, RetrigFreeRun, [k] (SynthParams& s, float v) { s.random[k].retrig = asInt (v); });
+        b.integer (p + "_vm_voices", n + " VM Steps", 1, 8, 8, [k] (SynthParams& s, float v) { s.random[k].vmVoices = asInt (v); });
+        b.choice (p + "_vm_mode", n + " VM Mode", kVmModes, VmCycle, [k] (SynthParams& s, float v) { s.random[k].vmMode = asInt (v); });
+        const float defaults[8] = { 0.6f, -0.3f, 0.9f, -0.8f, 0.2f, -0.5f, 0.4f, -0.1f };
+        for (size_t st = 0; st < 8; ++st)
+            b.flt (p + "_vm" + juce::String ((int) st + 1), n + " VM Step " + juce::String ((int) st + 1), -1, 1, defaults[st],
+                   [k, st] (SynthParams& s, float v) { s.random[k].vmSteps[st] = v; });
+        juce::StringArray shSources { "Noise" };
+        shSources.addArray (sourceNames());
+        b.choice (p + "_sh_src", n + " S&H Source", shSources, 0, [k] (SynthParams& s, float v) { s.random[k].shSource = asInt (v) - 1; });
+        b.flt (p + "_sh_rise", n + " S&H Rise", 0, 2, 0, [k] (SynthParams& s, float v) { s.random[k].shRise = v; }, "s", 0.2f);
+        b.flt (p + "_sh_fall", n + " S&H Fall", 0, 2, 0, [k] (SynthParams& s, float v) { s.random[k].shFall = v; }, "s", 0.2f);
+        b.boolean (p + "_sh_link", n + " S&H Link", true, [k] (SynthParams& s, float v) { s.random[k].shLink = asBool (v); });
+        b.flt (p + "_flip", n + " Turing Flip", 0, 1, 0, [k] (SynthParams& s, float v) { s.random[k].flip = v; });
+        b.integer (p + "_len", n + " Turing Length", 1, 32, 8, [k] (SynthParams& s, float v) { s.random[k].length = asInt (v); });
+        b.flt (p + "_proba", n + " Binary Probability", 0, 1, 0.5f, [k] (SynthParams& s, float v) { s.random[k].probability = v; });
+        b.flt (p + "_correl", n + " Binary Correlation", 0, 1, 0, [k] (SynthParams& s, float v) { s.random[k].correlation = v; });
+    }
+
+    b.group = "Combinators";
+    for (size_t k = 0; k < (size_t) kNumCombs; ++k)
+    {
+        const juce::String p = "comb" + juce::String ((int) k + 1), n = "Combinator " + juce::String ((int) k + 1);
+        b.choice (p + "_type", n + " Type", kCombTypes, CombSum, [k] (SynthParams& s, float v) { s.comb[k].type = asInt (v); });
+        b.choice (p + "_src", n + " Source", sourceNames(), SrcLfo1, [k] (SynthParams& s, float v) { s.comb[k].source = asInt (v); });
+        b.choice (p + "_mod", n + " Mod", sourceNames(), SrcLfo2, [k] (SynthParams& s, float v) { s.comb[k].mod = asInt (v); });
+        b.flt (p + "_amount", n + " Amount", 0, 1, 0.5f, [k] (SynthParams& s, float v) { s.comb[k].amount = v; });
+        b.choice (p + "_remap", n + " Remap Shape", presetNames (true), 3, [k] (SynthParams& s, float v) { s.comb[k].remapShape = asInt (v); });
+        b.choice (p + "_ef_input", n + " Follower Input", kFollowInputs, FollowVoice, [k] (SynthParams& s, float v) { s.comb[k].followInput = asInt (v); });
+        b.flt (p + "_ef_gain", n + " Follower Gain", 0, 4, 1, [k] (SynthParams& s, float v) { s.comb[k].followGain = v; });
+        b.flt (p + "_ef_thresh", n + " Follower Threshold", 0, 1, 0, [k] (SynthParams& s, float v) { s.comb[k].followThreshold = v; });
+        b.flt (p + "_ef_att", n + " Follower Attack", 0.001f, 2, 0.01f, [k] (SynthParams& s, float v) { s.comb[k].followAttack = v; }, "s", 0.1f);
+        b.flt (p + "_ef_rel", n + " Follower Release", 0.001f, 5, 0.2f, [k] (SynthParams& s, float v) { s.comb[k].followRelease = v; }, "s", 0.5f);
+    }
+
+    b.group = "Keyboard Curves & Quantize";
+    b.flt ("curve_velo", "Velocity Curve", -1, 1, 0, [] (SynthParams& s, float v) { s.curves.velocity = v; });
+    b.flt ("curve_at", "Aftertouch Curve", -1, 1, 0, [] (SynthParams& s, float v) { s.curves.aftertouch = v; });
+    b.flt ("curve_kbd", "Keytrack Curve", -1, 1, 0, [] (SynthParams& s, float v) { s.curves.keytrack = v; });
+    b.integer ("e1_q_mask", "Eng1 Coarse Quantize Notes", 1, 4095, 4095, [] (SynthParams& s, float v) { s.coarseQuantMask[0] = asInt (v); });
+    b.integer ("e2_q_mask", "Eng2 Coarse Quantize Notes", 1, 4095, 4095, [] (SynthParams& s, float v) { s.coarseQuantMask[1] = asInt (v); });
+    b.integer ("u_osc_q_mask", "Utility Osc Quantize Notes", 1, 4095, 4095, [] (SynthParams& s, float v) { s.utilityQuantMask = asInt (v); });
+}
+
 std::vector<ParamDef> build()
 {
     Builder b;
@@ -228,8 +373,9 @@ std::vector<ParamDef> build()
 
     b.group = "Routing & Amp";
     b.flt ("f_routing", "Filter Routing Ser/Par", 0, 1, 0, [] (SynthParams& s, float v) { s.filterRouting = v; });
-    b.flt ("amp_velo", "Amp Velocity", 0, 1, 0.5f, [] (SynthParams& s, float v) { s.ampVelocity = v; });
+    b.flt ("amp_velo", "Amp Mod Amount", 0, 1, 0.5f, [] (SynthParams& s, float v) { s.ampVelocity = v; });
     b.flt ("voice_pan", "Voice Pan", -1, 1, 0, [] (SynthParams& s, float v) { s.voicePan = v; });
+    b.choice ("amp_mod_src", "Amp Mod Source", sourceNames(), SrcVelocity, [] (SynthParams& s, float v) { s.ampModSource = asInt (v); });
 
     b.group = "Amp Envelope";
     b.flt ("env1_a", "Env Amp Attack", 0.001f, 20, 0.002f, [] (SynthParams& s, float v) { s.ampEnv.attack = v; }, "s", 0.5f);
@@ -251,6 +397,8 @@ std::vector<ParamDef> build()
     b.integer ("transpose", "Transpose Oct", -3, 3, 0, [] (SynthParams& s, float v) { s.transposeOct = asInt (v); });
     b.flt ("fine_tune", "Fine Tune", -1, 1, 0, [] (SynthParams& s, float v) { s.transposeFine = v; }, "st");
     b.boolean ("hold", "Hold", false, [] (SynthParams& s, float v) { s.hold = asBool (v); });
+
+    addModulation (b);
 
     b.group = "Master";
     b.flt ("master_vol", "Master Volume", 0, 1, 0.8f, [] (SynthParams& s, float v) { s.masterVolume = v; });

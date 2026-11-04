@@ -2,6 +2,7 @@
 
 #include "Parameters.h"
 #include "dsp/Content.h"
+#include "dsp/ModMatrix.h"
 #include "dsp/SynthCore.h"
 
 #include <juce_audio_formats/juce_audio_formats.h>
@@ -50,6 +51,10 @@ public:
     void clearUserFile (int slot); // back to the factory selection
     juce::String getSlotDisplayName (int slot) const;
 
+    // --- Modulation routes (message thread) -----------------------------------
+    cs::ModRouting getRoutes() const;
+    void setRoutes (const cs::ModRouting& r);
+
 private:
     cs::SynthCore synth;
     std::vector<std::atomic<float>*> rawParams;
@@ -62,6 +67,18 @@ private:
     juce::String userFile[NumContentSlots];    // file name in the user folder, or empty
     juce::String loadedKey[NumContentSlots];   // what is currently resolved
     bool missing[NumContentSlots] {};
+
+    // Routes: edited on the message thread, handed to the audio thread through a seqlock.
+    mutable juce::CriticalSection routeLock;
+    cs::ModRouting routesEdit;           // message-thread copy (guarded by routeLock)
+    cs::ModRouting routesShared;         // published copy
+    std::atomic<uint32_t> routeSeq { 0 };
+    uint32_t routeSeqSeen = ~0u;         // audio thread only
+    cs::ModRouting routesAudio;          // audio-thread scratch
+    void publishRoutes (const cs::ModRouting& r);
+    void pullRoutes() noexcept;
+    static juce::ValueTree routesToTree (const cs::ModRouting& r);
+    static cs::ModRouting routesFromTree (const juce::ValueTree& t);
 
     class Loader;
     std::unique_ptr<Loader> loader;

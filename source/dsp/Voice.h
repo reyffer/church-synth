@@ -5,6 +5,8 @@
 #include "WavetableEngine.h"
 #include "ClassicFilter.h"
 #include "Envelope.h"
+#include "ModMatrix.h"
+#include "ModSources.h"
 
 namespace cs
 {
@@ -20,6 +22,8 @@ public:
             wavetable[e].setSampleRate (sr);
         }
         utility.setSampleRate (sr);
+        env2.setSampleRate (sr);
+        env3.setSampleRate (sr);
         for (auto& f : filt)
             f.setSampleRate (sr);
         env.setSampleRate (sr);
@@ -62,6 +66,14 @@ public:
         env.kill();
         env.gateOn();
         envPrev = 0.0f;
+        startMod (p, seed);
+    }
+
+    // Voice Modulator step for each Random slot, chosen by the SynthCore at note-on.
+    void setVoiceModSteps (const int* steps) noexcept
+    {
+        for (int k = 0; k < kNumRandoms; ++k)
+            vmStep[k] = steps[k];
     }
 
     // Retrigger/legato on a voice that is already sounding (no phase reset, no click).
@@ -77,7 +89,17 @@ public:
             pitch = targetPitch;
         glideStart (p);
         if (retriggerEnv)
+        {
             env.gateOn();
+            if (p.env2Retrig == EnvRetrigPolyKbd) env2.gateOn();
+            if (p.env3Retrig == EnvRetrigPolyKbd) env3.gateOn();
+            retriggerPolySources (p);
+        }
+        else
+        {
+            if (p.env2Retrig == EnvRetrigLegatoKbd) env2.gateOn();
+            if (p.env3Retrig == EnvRetrigLegatoKbd) env3.gateOn();
+        }
     }
 
     // Fade out quickly, then start the pending note on this voice.
@@ -101,7 +123,11 @@ public:
         if (stealing)
             pendingReleased = true; // honour the note-off once the pending note starts
         else
+        {
             env.gateOff();
+            env2.gateOff();
+            env3.gateOff();
+        }
     }
 
     void kill() noexcept
@@ -111,14 +137,42 @@ public:
         stealing = false;
         sustained = false;
         env.kill();
+        env2.kill();
+        env3.kill();
     }
 
-    // Renders n <= kBlock samples and adds them to outL/outR.
-    void render (const SynthParams& p, float bendSemis, int n, float* outL, float* outR) noexcept
+    // Renders n <= kBlock samples and adds them to outL/outR, after computing
+    // this voice's modulation sources and applying the routing.
+    void render (const SynthParams& p, const GlobalMod& g, const ModRouting& routing,
+                 float bendSemis, int n, float* outL, float* outR) noexcept
     {
         if (! active)
             return;
+        // Source settings use last block's modulated values (so LFO rate etc. can be modulated).
+        const SynthParams& sp = localValid ? local : p;
+        computeSources (sp, g, n);
 
+        const SynthParams* use = &p;
+        if (routing.numTouched > 0)
+        {
+            local = p;
+            applyRouting (routing);
+            use = &local;
+            localValid = true;
+        }
+        else
+            localValid = false;
+
+        const float u = srcUnipolar (use->ampModSource);
+        ampGain = 1.0f - std::clamp (use->ampVelocity, 0.0f, 1.0f) * (1.0f - u);
+        renderAudio (*use, bendSemis, n, outL, outR);
+    }
+
+    float sourceValue (int s) const noexcept { return (s >= 0 && s < NumModSources) ? src[s] : 0.0f; }
+
+private:
+    void renderAudio (const SynthParams& p, float bendSemis, int n, float* outL, float* outR) noexcept
+    {
         // --- pitch / glide (control rate) ----------------------------------
         if (std::abs (pitch - targetPitch) > 0.0f)
         {
@@ -164,6 +218,13 @@ public:
                 wavetable[e].render (ep, notePitch, fixedPitch, n, eL, eR, ext, modBuf[e]);
             else
                 analog[e].render (ep, notePitch, fixedPitch, n, eL, eR, ext, modBuf[e]);
+            if (needFollow)
+            {
+                float pk = 0.0f;
+                for (int i = 0; i < n; ++i)
+                    pk = std::max (pk, std::abs (eL[i]) + std::abs (eR[i]));
+                followPeak[FollowEngine1 + e] = 0.5f * pk;
+            }
 
             const float toF2 = std::clamp (ep.filterMix, 0.0f, 1.0f), toF1 = 1.0f - toF2;
             for (int i = 0; i < n; ++i)
@@ -178,7 +239,18 @@ public:
             for (int i = 0; i < kBlock; ++i)
                 prevMod[e][i] = i < n ? modBuf[e][i] : 0.0f;
 
-        utility.render (p.utility, notePitch, fixedPitch, n, in1L, in1R, in2L, in2R, postL, postR);
+        if (needFollow)
+        {
+            float pre = 0.0f, post = 0.0f;
+            for (int i = 0; i < n; ++i)
+                pre = std::max (pre, std::abs (in1L[i] + in2L[i]));
+            utility.render (p.utility, notePitch, fixedPitch, n, in1L, in1R, in2L, in2R, postL, postR);
+            for (int i = 0; i < n; ++i)
+                post = std::max (post, std::abs (in1L[i] + in2L[i] + postL[i]));
+            followPeak[FollowUtility] = std::max (0.0f, post - pre);
+        }
+        else
+            utility.render (p.utility, notePitch, fixedPitch, n, in1L, in1R, in2L, in2R, postL, postR);
 
         // --- filters (coefficients at control rate, cutoff smoothed in log2) ----
         float fGainL[kNumFilters], fGainR[kNumFilters];
@@ -199,12 +271,12 @@ public:
 
         // --- amp envelope (control-rate points, per-sample interpolation) ----
         const float envNow = env.advance (p.ampEnv, n);
-        const float velGain = 1.0f - std::clamp (p.ampVelocity, 0.0f, 1.0f) * (1.0f - velocity);
         float vpL, vpR;
         panGains (p.voicePan, vpL, vpR);
         const float fadeStep = stealing ? -1.0f / (0.003f * sampleRate) : 0.0f; // 3 ms steal fade
         const float envStep = (envNow - envPrev) / (float) n;
         float envV = envPrev;
+        float fPk1 = 0.0f, fPk2 = 0.0f, fPkV = 0.0f;
 
         for (int i = 0; i < n; ++i)
         {
@@ -225,11 +297,23 @@ public:
             envV += envStep;
             if (stealing)
                 fade = std::max (0.0f, fade + fadeStep);
-            const float amp = envV * velGain * fade;
+            const float amp = envV * ampGain * fade;
+            if (needFollow)
+            {
+                fPk1 = std::max (fPk1, std::abs (aL));
+                fPk2 = std::max (fPk2, std::abs (bL));
+                fPkV = std::max (fPkV, std::abs (yL * amp));
+            }
             outL[i] += yL * amp * vpL;
             outR[i] += yR * amp * vpR;
         }
         envPrev = envNow;
+        if (needFollow)
+        {
+            followPeak[FollowFilter1] = fPk1;
+            followPeak[FollowFilter2] = fPk2;
+            followPeak[FollowVoice] = fPkV;
+        }
 
         if (stealing && fade <= 0.0f)
         {
@@ -246,6 +330,224 @@ public:
 
 private:
     float sampleRate = 48000.0f;
+    // --- modulation state ----------------------------------------------------
+    Envelope env2, env3;
+    Lfo lfo[kNumLfos];
+    FunctionGen func[kNumFuncs];
+    RandomGen rnd[kNumRandoms];
+    Rng modRng;
+    float src[NumModSources] {};
+    bool srcBipolar[NumModSources] {};
+    float combLag[kNumCombs] {};
+    float followLevel[kNumCombs] {};
+    float followPeak[FollowInputCount] {};
+    bool needFollow = false;
+    int vmStep[kNumRandoms] {};
+    float ampGain = 1.0f;
+    SynthParams local;
+    bool localValid = false;
+
+    void startMod (const SynthParams& p, uint32_t seed) noexcept
+    {
+        modRng.seed (seed ^ 0xA5A5A5A5u);
+        env2.kill();
+        env3.kill();
+        env2.gateOn();
+        env3.gateOn();
+        for (int k = 0; k < kNumLfos; ++k)
+            lfo[k].reset (p.lfo[(size_t) k], modRng);
+        for (int k = 0; k < kNumFuncs; ++k)
+            func[k].reset();
+        for (int k = 0; k < kNumRandoms; ++k)
+            rnd[k].reset (modRng);
+        for (int k = 0; k < kNumCombs; ++k)
+            combLag[k] = followLevel[k] = 0.0f;
+        for (auto& f : followPeak)
+            f = 0.0f;
+        localValid = false;
+    }
+
+    void retriggerPolySources (const SynthParams& p) noexcept
+    {
+        for (int k = 0; k < kNumLfos; ++k)
+            if (p.lfo[(size_t) k].retrig == RetrigPolyKbd)
+                lfo[k].reset (p.lfo[(size_t) k], modRng);
+        for (int k = 0; k < kNumFuncs; ++k)
+            if (p.func[(size_t) k].retrig == RetrigPolyKbd)
+                func[k].reset();
+        for (int k = 0; k < kNumRandoms; ++k)
+            if (p.random[(size_t) k].retrig == RetrigPolyKbd)
+                rnd[k].reset (modRng);
+    }
+
+    float srcUnipolar (int s) const noexcept
+    {
+        if (s < 0 || s >= NumModSources)
+            return 1.0f;
+        return srcBipolar[s] ? 0.5f * (src[s] + 1.0f) : src[s];
+    }
+
+    // Was LFO k's cycle restarted this block (as seen by this voice)?
+    bool lfoWrapped (const GlobalMod& g, int k) const noexcept
+    {
+        return g.lfoIsGlobal[k] ? g.lfoWrap[k] : lfo[k].wrapped;
+    }
+
+    void computeSources (const SynthParams& p, const GlobalMod& g, int n) noexcept
+    {
+        const float dt = (float) n / sampleRate;
+        const float keyNorm = std::clamp ((pitch - 60.0f) / 60.0f, -1.0f, 1.0f);
+
+        src[SrcVelocity] = applyCurve (velocity, p.curves.velocity);
+        src[SrcAftertouch] = applyCurve (std::max (g.aftertouch, polyPressure), p.curves.aftertouch);
+        src[SrcModWheel] = g.modWheel;
+        src[SrcKeytrack] = applyCurve (keyNorm, p.curves.keytrack);
+        src[SrcExpression] = g.expression;
+        srcBipolar[SrcKeytrack] = true;
+
+        // LFOs (in order, so one LFO can retrigger a later one in the same block)
+        for (int k = 0; k < kNumLfos; ++k)
+        {
+            const auto& lp = p.lfo[(size_t) k];
+            srcBipolar[SrcLfo1 + k] = lp.bipolar;
+            if (! g.used[SrcLfo1 + k])
+                continue;
+            if (g.lfoIsGlobal[k])
+                src[SrcLfo1 + k] = g.lfo[k];
+            else
+            {
+                const int r = lp.retrig;
+                if (r >= RetrigLfo1 && r <= RetrigLfo3 && r - RetrigLfo1 != k && lfoWrapped (g, r - RetrigLfo1))
+                    lfo[k].reset (lp, modRng);
+                float hz = rateToHz (lp.rate, g.transport);
+                if (std::abs (lp.keytrack) > 1.0e-3f)
+                    hz *= std::exp2 (lp.keytrack * (pitch - 60.0f) / 12.0f);
+                lfo[k].tick (lp, hz, n, sampleRate, modRng);
+                src[SrcLfo1 + k] = lfo[k].value;
+            }
+            srcBipolar[SrcLfo1 + k] = lp.bipolar;
+        }
+
+        // Envelopes 2 / 3 (can be retriggered by an LFO)
+        auto lfoRetrig = [&] (int envRetrig) {
+            const int k = envRetrig - EnvRetrigLfo1;
+            return envRetrig >= EnvRetrigLfo1 && lfoWrapped (g, k);
+        };
+        if (lfoRetrig (p.env2Retrig) && gate) env2.gateOn();
+        if (lfoRetrig (p.env3Retrig) && gate) env3.gateOn();
+        src[SrcEnvAmp] = env.getLevel();
+        if (g.used[SrcEnv2]) src[SrcEnv2] = env2.advance (p.env2, n);
+        if (g.used[SrcEnv3]) src[SrcEnv3] = env3.advance (p.env3, n);
+
+        // Functions
+        for (int k = 0; k < kNumFuncs; ++k)
+        {
+            const auto& fp = p.func[(size_t) k];
+            srcBipolar[SrcFunc1 + k] = fp.bipolar || fp.scale < 0.0f;
+            if (! g.used[SrcFunc1 + k])
+                continue;
+            if (g.funcIsGlobal[k])
+                src[SrcFunc1 + k] = g.func[k];
+            else
+            {
+                const int r = fp.retrig;
+                if (r >= RetrigLfo1 && r <= RetrigLfo3 && lfoWrapped (g, r - RetrigLfo1))
+                    func[k].reset();
+                func[k].tick (fp, rateToHz (fp.rate, g.transport), gate, n, sampleRate);
+                src[SrcFunc1 + k] = func[k].value;
+            }
+            srcBipolar[SrcFunc1 + k] = fp.bipolar || fp.scale < 0.0f;
+        }
+
+        // Random generators (Sample & Hold can sample the sources above)
+        for (int k = 0; k < kNumRandoms; ++k)
+        {
+            const auto& rp = p.random[(size_t) k];
+            srcBipolar[SrcRand1 + k] = rp.bipolar;
+            if (! g.used[SrcRand1 + k])
+                continue;
+            if (g.randIsGlobal[k] && rp.type != RandVoiceMod)
+                src[SrcRand1 + k] = g.rnd[k];
+            else
+            {
+                const int r = rp.retrig;
+                if (r >= RetrigLfo1 && r <= RetrigLfo3 && lfoWrapped (g, r - RetrigLfo1))
+                    rnd[k].reset (modRng);
+                rnd[k].tick (rp, rateToHz (rp.rate, g.transport), n, sampleRate, modRng, src, vmStep[k]);
+                src[SrcRand1 + k] = rnd[k].value;
+            }
+            srcBipolar[SrcRand1 + k] = rp.bipolar;
+        }
+
+        // Combinators (in order; a later one used as input gives last block's value)
+        needFollow = false;
+        for (int k = 0; k < kNumCombs; ++k)
+        {
+            const auto& cp = p.comb[(size_t) k];
+            srcBipolar[SrcComb1 + k] = cp.type != CombEnvFollow;
+            if (! g.used[SrcComb1 + k])
+                continue;
+            if (cp.type == CombEnvFollow)
+            {
+                needFollow = true;
+                const float in = followPeak[std::clamp (cp.followInput, 0, FollowInputCount - 1)] * cp.followGain;
+                const float thr = std::clamp (cp.followThreshold, 0.0f, 0.99f);
+                const float x = std::clamp ((in - thr) / (1.0f - thr), 0.0f, 1.0f);
+                const float t = x > followLevel[k] ? cp.followAttack : cp.followRelease;
+                followLevel[k] += (x - followLevel[k]) * (t > 0.0f ? 1.0f - std::exp (-dt / t) : 1.0f);
+            }
+            const float a = sourceValue (cp.source), m = sourceValue (cp.mod);
+            src[SrcComb1 + k] = combine (cp, a, m, combLag[k], followLevel[k], dt);
+            srcBipolar[SrcComb1 + k] = cp.type != CombEnvFollow;
+        }
+
+        for (int k = 0; k < 4; ++k)
+            src[SrcMacro1 + k] = p.macro[(size_t) k];
+    }
+
+    void applyRouting (const ModRouting& routing) noexcept
+    {
+        float add[kMaxRoutes] {};
+        for (int r = 0; r < routing.count; ++r)
+        {
+            const int slot = routing.slotOf[r];
+            if (slot < 0)
+                continue;
+            const auto& rt = routing.routes[r];
+            float v = src[rt.source] * rt.amount;
+            if (rt.sidechain >= 0 && rt.sidechain < NumModSources)
+                v *= 1.0f - rt.scAmount + rt.scAmount * src[rt.sidechain];
+            add[slot] += v;
+        }
+
+        const auto& dests = modDestinations();
+        bool coarseTouched[kNumEngines] {}, utilCoarseTouched = false;
+        for (int i = 0; i < routing.numTouched; ++i)
+        {
+            const int d = routing.touched[i];
+            const auto& dest = dests[(size_t) d];
+            float& f = dest.ref (local);
+            f = dest.fromNorm (dest.toNorm (f) + add[i]);
+            if (d == coarseDest[0]) coarseTouched[0] = true;
+            if (d == coarseDest[1]) coarseTouched[1] = true;
+            if (d == utilCoarseDest) utilCoarseTouched = true;
+        }
+
+        // Mod Quantize: snap modulated coarse tuning to the allowed intervals.
+        for (int e = 0; e < kNumEngines; ++e)
+            if (coarseTouched[e])
+                local.engine[(size_t) e].coarse = quantizeSemitones (local.engine[(size_t) e].coarse, local.coarseQuantMask[(size_t) e]);
+        if (utilCoarseTouched)
+            local.utility.oscCoarse = quantizeSemitones (local.utility.oscCoarse, local.utilityQuantMask);
+    }
+
+    inline static const int coarseDest[kNumEngines] = { findModDest ("e1_coarse"), findModDest ("e2_coarse") };
+    inline static const int utilCoarseDest = findModDest ("u_osc_coarse");
+
+public:
+    float polyPressure = 0.0f; // set by the SynthCore from poly aftertouch
+
+private:
     AnalogEngine analog[kNumEngines];
     WavetableEngine wavetable[kNumEngines];
     UtilityEngine utility;

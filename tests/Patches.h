@@ -3,6 +3,7 @@
 // Reference patches shared by the tests and the CPU benchmark.
 
 #include "dsp/Content.h"
+#include "dsp/ModMatrix.h"
 #include "dsp/Params.h"
 
 namespace cs::patches
@@ -155,6 +156,30 @@ inline SynthParams wavetableHeavy()
         eng.wt.modRatio = 2.0f;
     }
     p.maxVoices = 16;
+    return p;
+}
+// Analog pad with a typical amount of modulation (6 routes, mixed poly / global sources).
+inline SynthParams modulatedPad (ModRouting& r)
+{
+    SynthParams p = pad();
+    p.lfo[0].rate.hz = 0.3f;
+    p.lfo[1].retrig = RetrigFreeRun;
+    p.lfo[1].rate.hz = 5.0f;
+    p.random[0].type = RandRandom;
+    p.random[0].smooth = 0.8f;
+    p.comb[0] = { CombSum, SrcLfo1, SrcLfo2, 0.3f, 0, FollowVoice, 1.0f, 0.0f, 0.01f, 0.2f };
+    p.env2.decay = 1.5f;
+    auto add = [&r] (int s, const char* dest, float amt, int sc = -1) {
+        r.routes[r.count++] = { s, findModDest (dest), amt, sc, 1.0f };
+    };
+    r.count = 0;
+    add (SrcLfo1, "f1_cutoff", 0.15f);
+    add (SrcEnv2, "f1_cutoff", 0.25f);
+    add (SrcLfo2, "e1_fine", 0.02f, SrcModWheel);
+    add (SrcRand1, "e2_uni_detune", 0.1f);
+    add (SrcComb1, "f1_reso", 0.2f);
+    add (SrcVelocity, "f1_drive", 0.2f);
+    r.prepare();
     return p;
 }
 } // namespace cs::patches

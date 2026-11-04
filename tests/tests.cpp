@@ -4,6 +4,8 @@
 #include "Patches.h"
 #include "dsp/SynthCore.h"
 #include "dsp/WavetableEngine.h"
+#include "dsp/ModMatrix.h"
+#include "dsp/ModSources.h"
 
 #include <cmath>
 #include <cstdio>
@@ -405,8 +407,301 @@ static void testWavImportSlicing()
     CHECK (err < 1.0e-3, "imported frame reproduces the source cycle");
 }
 
+// --- Milestone 3: modulation ------------------------------------------------
+
+// RMS of consecutive chunks; returns (max - min) in dB across chunks.
+static float levelSwingDb (SynthCore& s, int chunks, int chunk)
+{
+    std::vector<float> l ((size_t) chunk), r ((size_t) chunk);
+    float lo = 1.0e9f, hi = -1.0e9f;
+    for (int c = 0; c < chunks; ++c)
+    {
+        s.render (l.data(), r.data(), chunk);
+        double e = 0.0;
+        for (float v : l) e += v * v;
+        const float db = 10.0f * std::log10 ((float) (e / chunk) + 1.0e-12f);
+        lo = std::min (lo, db);
+        hi = std::max (hi, db);
+    }
+    return hi - lo;
+}
+
+static void addRoute (ModRouting& r, int src, const char* dest, float amount, int sc = -1, float scAmt = 1.0f)
+{
+    r.routes[r.count++] = { src, findModDest (dest), amount, sc, scAmt };
+}
+
+static void testLfoBasics()
+{
+    LfoParams p;
+    p.rate.hz = 2.0f;
+    Lfo lfo;
+    Rng rng;
+    lfo.reset (p, rng);
+    int wraps = 0;
+    float lo = 1, hi = -1;
+    for (int i = 0; i < 48000 / kBlock; ++i)
+    {
+        lfo.tick (p, 2.0f, kBlock, 48000.0f, rng);
+        wraps += lfo.wrapped ? 1 : 0;
+        lo = std::min (lo, lfo.value);
+        hi = std::max (hi, lfo.value);
+    }
+    CHECK (wraps >= 1 && wraps <= 3, "2 Hz LFO wraps twice a second");
+    CHECK (lo < -0.95f && hi > 0.95f, "bipolar LFO spans -1..1");
+
+    for (int w = 0; w < LfoWaveCount; ++w)
+        for (float sym : { 0.1f, 0.5f, 0.9f })
+        {
+            p.wave = w;
+            p.symmetry = sym;
+            p.bipolar = false;
+            for (int i = 0; i < 2000; ++i)
+            {
+                lfo.tick (p, 7.0f, kBlock, 48000.0f, rng);
+                CHECK (lfo.value >= -1.0e-4f && lfo.value <= 1.0001f, "unipolar LFO stays in 0..1");
+            }
+        }
+
+    Transport t;
+    t.bpm = 120.0;
+    RateParams r { 1.0f, true, 7 }; // 1/4
+    CHECK (std::abs (rateToHz (r, t) - 2.0f) < 1.0e-4f, "1/4 at 120 BPM = 2 Hz");
+    r.div = 12; // 1/8 T
+    CHECK (std::abs (rateToHz (r, t) - 6.0f) < 1.0e-3f, "1/8 triplet at 120 BPM = 6 Hz");
+}
+
+static void testFunctionsAndPresets()
+{
+    for (int k = 0; k < kNumFunctionPresets; ++k)
+        for (int i = 0; i <= 200; ++i)
+        {
+            const float v = functionPreset (k).eval ((float) i / 200.0f);
+            CHECK (v >= -1.0e-4f && v <= 1.0001f, "function preset stays in 0..1");
+        }
+    for (int k = 0; k < kNumRemapShapes; ++k)
+        CHECK (std::isfinite (remapShape (k).eval (0.37f)), "remap shape evaluates");
+
+    // Envelope mode holds at the sustain point while the gate is on, then finishes.
+    FunctionParams fp;
+    fp.shape = &functionPreset (8); // Rise & Fall, sustain at point 2 (y = 1)
+    fp.mode = FuncEnvelope;
+    fp.rate.hz = 4.0f;
+    FunctionGen fg;
+    fg.reset();
+    for (int i = 0; i < 48000 / kBlock; ++i)
+        fg.tick (fp, 4.0f, true, kBlock, 48000.0f);
+    CHECK (std::abs (fg.value - 1.0f) < 0.02f, "function envelope holds at sustain");
+    for (int i = 0; i < 48000 / kBlock; ++i)
+        fg.tick (fp, 4.0f, false, kBlock, 48000.0f);
+    CHECK (fg.value < 0.02f, "function envelope finishes after release");
+}
+
+static void testRandomGenerators()
+{
+    Rng rng;
+    for (int type = 0; type < RandTypeCount; ++type)
+    {
+        RandomParams rp;
+        rp.type = type;
+        rp.smooth = 0.5f;
+        rp.jitter = 0.5f;
+        RandomGen g;
+        g.reset (rng);
+        float src[NumModSources] {};
+        for (int i = 0; i < 6000; ++i)
+        {
+            src[SrcLfo1] = std::sin ((float) i * 0.01f);
+            g.tick (rp, 20.0f, kBlock, 48000.0f, rng, src, i % 8);
+            CHECK (std::isfinite (g.value) && g.value >= -1.0001f && g.value <= 1.0001f, "random generator bounded");
+        }
+    }
+
+    // Turing with flip 0 repeats with the chosen length.
+    RandomParams tp;
+    tp.type = RandTuring;
+    tp.flip = 0.0f;
+    tp.length = 5;
+    RandomGen tg;
+    tg.reset (rng);
+    std::vector<float> seq;
+    for (int i = 0; i < 4000 && seq.size() < 15; ++i)
+    {
+        tg.tick (tp, 50.0f, kBlock, 48000.0f, rng, nullptr, 0);
+        if (tg.wrapped)
+            seq.push_back (tg.value);
+    }
+    bool repeats = seq.size() >= 15;
+    for (size_t i = 5; i < seq.size(); ++i)
+        repeats = repeats && std::abs (seq[i] - seq[i - 5]) < 1.0e-6f;
+    CHECK (repeats, "Turing at flip 0 loops with its length");
+
+    // Binary probability.
+    RandomParams bp;
+    bp.type = RandBinary;
+    bp.probability = 0.5f;
+    bp.bipolar = false;
+    RandomGen bg;
+    bg.reset (rng);
+    int ones = 0, steps = 0;
+    for (int i = 0; i < 200000 && steps < 2000; ++i)
+    {
+        bg.tick (bp, 100.0f, kBlock, 48000.0f, rng, nullptr, 0);
+        if (bg.wrapped) { ++steps; ones += bg.value > 0.5f ? 1 : 0; }
+    }
+    CHECK (steps == 2000 && ones > 850 && ones < 1150, "Binary at 50 % gives about half ones");
+}
+
+static void testCombinators()
+{
+    CombParams c;
+    float lag = 0.0f;
+    c.amount = 0.5f;
+    c.type = CombSum;      CHECK (std::abs (combine (c, 0.2f, 0.4f, lag, 0, 0.001f) - 0.4f) < 1e-5f, "comb sum");
+    c.type = CombDiff;     CHECK (std::abs (combine (c, 0.2f, 0.4f, lag, 0, 0.001f) - 0.0f) < 1e-5f, "comb diff");
+    c.type = CombMultiply; CHECK (std::abs (combine (c, 0.5f, 0.5f, lag, 0, 0.001f) - 0.375f) < 1e-5f, "comb multiply");
+    c.type = CombCrossfade;CHECK (std::abs (combine (c, 0.0f, 1.0f, lag, 0, 0.001f) - 0.5f) < 1e-5f, "comb crossfade");
+    c.type = CombThreshold;CHECK (std::abs (combine (c, -0.5f, 0.0f, lag, 0, 0.001f) - 0.0f) < 1e-5f, "comb threshold");
+    c.type = CombOffset;   CHECK (std::abs (combine (c, -0.5f, 0.0f, lag, 0, 0.001f) - 0.5f) < 1e-5f, "comb offset");
+    c.type = CombDivide;   CHECK (std::isfinite (combine (c, 1.0f, -0.5f, lag, 0, 0.001f)), "comb divide is safe at zero");
+    c.type = CombLag;
+    lag = 0.0f;
+    float v = 0.0f;
+    for (int i = 0; i < 100; ++i) v = combine (c, 1.0f, 0.0f, lag, 0, 0.001f);
+    CHECK (v > 0.0f && v < 0.5f, "comb lag rises slowly");
+    c.type = CombRemap;
+    c.remapShape = 7; // Invert
+    c.amount = 1.0f;
+    CHECK (std::abs (combine (c, 0.6f, 0.0f, lag, 0, 0.001f) + 0.6f) < 0.02f, "comb remap invert");
+}
+
+static void testRoutingModulates()
+{
+    // LFO -> cutoff makes the level move; no route keeps it steady.
+    for (bool routed : { false, true })
+    {
+        SynthCore s;
+        s.setSampleRate (48000.0f);
+        s.params.filter[0].mode = LP24;
+        s.params.filter[0].cutoff = 600.0f;
+        s.params.lfo[0].rate.hz = 3.0f;
+        ModRouting r;
+        if (routed) addRoute (r, SrcLfo1, "f1_cutoff", 0.4f);
+        s.setRouting (r);
+        s.noteOn (48, 1.0f);
+        renderStats (s, 4800);
+        const float swing = levelSwingDb (s, 40, 1200);
+        CHECK (routed ? swing > 6.0f : swing < 1.5f, routed ? "LFO->cutoff modulates" : "no route, no modulation");
+    }
+
+    // Sidechain: mod wheel at 0 disables the route, at 1 enables it.
+    for (float wheel : { 0.0f, 1.0f })
+    {
+        SynthCore s;
+        s.setSampleRate (48000.0f);
+        s.params.lfo[0].rate.hz = 4.0f;
+        ModRouting r;
+        addRoute (r, SrcLfo1, "e1_vol", -0.6f, SrcModWheel, 1.0f);
+        s.setRouting (r);
+        s.setModWheel (wheel);
+        s.noteOn (60, 1.0f);
+        renderStats (s, 4800);
+        const float swing = levelSwingDb (s, 40, 1200);
+        CHECK (wheel > 0.5f ? swing > 6.0f : swing < 1.5f, "sidechain scales the route");
+    }
+
+    // Amp mod with an LFO as source makes a tremolo.
+    {
+        SynthCore s;
+        s.setSampleRate (48000.0f);
+        s.params.ampModSource = SrcLfo1;
+        s.params.ampVelocity = 0.8f;
+        s.params.lfo[0].rate.hz = 5.0f;
+        s.noteOn (60, 1.0f);
+        renderStats (s, 4800);
+        CHECK (levelSwingDb (s, 40, 600) > 6.0f, "amp mod by LFO = tremolo");
+    }
+}
+
+static void testGlobalVersusPolySources()
+{
+    for (int retrig : { (int) RetrigPolyKbd, (int) RetrigFreeRun })
+    {
+        SynthCore s;
+        s.setSampleRate (48000.0f);
+        s.params.voicing = VoicingPolyReassign;
+        s.params.lfo[0].rate.hz = 1.3f;
+        s.params.lfo[0].retrig = retrig;
+        ModRouting r;
+        addRoute (r, SrcLfo1, "voice_pan", 0.5f);
+        s.setRouting (r);
+        s.noteOn (60, 1.0f);   // voice 0
+        renderStats (s, 14400); // 0.3 s later
+        s.noteOn (64, 1.0f);   // voice 1
+        renderStats (s, 4800);
+        const float a = s.voiceSourceValue (0, SrcLfo1), b = s.voiceSourceValue (1, SrcLfo1);
+        CHECK (retrig == RetrigFreeRun ? std::abs (a - b) < 1.0e-5f : std::abs (a - b) > 0.1f,
+               retrig == RetrigFreeRun ? "free-running LFO is shared by voices" : "poly LFO restarts per voice");
+    }
+}
+
+static void testVoiceModulatorCycles()
+{
+    SynthCore s;
+    s.setSampleRate (48000.0f);
+    s.params.random[0].type = RandVoiceMod;
+    s.params.random[0].vmMode = VmCycle;
+    s.params.random[0].vmVoices = 4;
+    s.params.random[0].vmSteps = { 0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f };
+    ModRouting r;
+    addRoute (r, SrcRand1, "voice_pan", 0.5f);
+    s.setRouting (r);
+    s.params.voicing = VoicingPolyReassign;
+    for (int k = 0; k < 4; ++k)
+    {
+        s.noteOn (60 + k, 1.0f);
+        renderStats (s, 256);
+    }
+    bool ok = true;
+    for (int k = 0; k < 4; ++k)
+        ok = ok && std::abs (s.voiceSourceValue (k, SrcRand1) - 0.1f * (float) (k + 1)) < 1.0e-5f;
+    CHECK (ok, "voice modulator hands out steps in order");
+}
+
+static void testModQuantize()
+{
+    const int rootFifth = (1 << 0) | (1 << 7);
+    CHECK (quantizeSemitones (4.2f, rootFifth) == 7.0f, "4 snaps to the fifth");
+    CHECK (quantizeSemitones (2.0f, rootFifth) == 0.0f, "2 snaps to the root");
+    CHECK (quantizeSemitones (-4.0f, rootFifth) == -5.0f, "-4 snaps to the fifth below");
+    CHECK (quantizeSemitones (3.4f, 0xFFF) == 3.0f, "full mask just rounds");
+}
+
+static void testModulatedPatchSane()
+{
+    ModRouting r;
+    SynthCore s;
+    s.setSampleRate (48000.0f);
+    s.params = patches::modulatedPad (r);
+    s.setRouting (r);
+    s.setModWheel (1.0f);
+    for (int n : { 48, 55, 60, 64, 67, 71, 74, 79 })
+        s.noteOn (n, 0.8f);
+    const auto st = renderStats (s, 48000 * 2);
+    CHECK (st.finite && st.peak < 2.0f && st.rms > 0.01f, "modulated pad renders sanely");
+}
+
 int main()
 {
+    testLfoBasics();
+    testFunctionsAndPresets();
+    testRandomGenerators();
+    testCombinators();
+    testRoutingModulates();
+    testGlobalVersusPolySources();
+    testVoiceModulatorCycles();
+    testModQuantize();
+    testModulatedPatchSane();
     testFactoryWavetablesPlay();
     testWavetableNoAliasing();
     testPhaseTransformAndFoldRanges();

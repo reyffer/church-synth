@@ -18,7 +18,9 @@ option(CS_BUILD_TESTS  "Build DSP tests and the CPU benchmark" ON)
 add_library(cs_dsp STATIC
     source/dsp/SynthCore.cpp
     source/dsp/Content.cpp
-    source/dsp/ContentFactory.cpp)
+    source/dsp/ContentFactory.cpp
+    source/dsp/ModMatrix.cpp
+    source/dsp/ModSources.cpp)
 target_include_directories(cs_dsp PUBLIC source)
 set_target_properties(cs_dsp PROPERTIES POSITION_INDEPENDENT_CODE ON)
 if(MSVC)
@@ -96,4 +98,25 @@ if(CS_BUILD_PLUGIN)
             juce::juce_recommended_config_flags
             juce::juce_recommended_lto_flags
             juce::juce_recommended_warning_flags)
+
+    if(CS_BUILD_TESTS)
+        # Plugin-level state test: a console app compiling the processor sources directly.
+        juce_add_console_app(cs_state_test PRODUCT_NAME "cs_state_test")
+        target_sources(cs_state_test PRIVATE
+            tests/state_test.cpp
+            source/plugin/Parameters.cpp
+            source/plugin/PluginProcessor.cpp
+            source/plugin/PluginEditor.cpp)
+        target_include_directories(cs_state_test PRIVATE source)
+        target_compile_definitions(cs_state_test PRIVATE
+            JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
+            "JucePlugin_Name=\"Church Synth\""
+            "JucePlugin_VersionString=\"test\"")
+        target_link_libraries(cs_state_test PRIVATE
+            cs_dsp
+            juce::juce_audio_utils
+            juce::juce_audio_formats
+            juce::juce_recommended_config_flags)
+        add_test(NAME plugin_state_test COMMAND cs_state_test)
+    endif()
 endif()

@@ -2,7 +2,7 @@
 
 A lean, reliable hybrid synth for live worship, built to run several instances in MainStage on an M1 MacBook Pro. Its architecture is modelled on Arturia Pigments (2 engines + utility, 2 filters, deep modulation, 3 FX buses, seq/arp), cut down to what we actually use. The full feature list is in [SPEC.md](SPEC.md).
 
-**Status: Milestone 2.** Two engine slots (Analog or Wavetable, with cross-mod), Utility engine (2 noise players + sub osc), 40 generated wavetables and 34 generated noises, user WAV import, Classic filter (×2), amp envelope, poly/mono/glide. The editor is temporary (file pickers + parameter list); the Pigments-style UI comes in Milestone 7.
+**Status: Milestone 3.** Two engine slots (Analog or Wavetable, with cross-mod), Utility engine, 40 generated wavetables and 34 noises, user WAV import, Classic filter (×2), amp envelope, and the full modulation system: Env 2/3, 3 LFOs, 3 Functions, 3 Random generators, 3 Combinators, 4 Macros, a 64-route matrix with sidechains, aftertouch and tempo sync. The editor is temporary (tabs: Sound, Modulation, Files); the Pigments-style UI comes in Milestone 7.
 
 ## Getting a build
 

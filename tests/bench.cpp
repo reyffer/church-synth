@@ -23,7 +23,15 @@ struct Case
     const char* name;
     SynthParams params;
     std::vector<int> notes;
+    ModRouting routing {};
 };
+
+static Case modulated (const std::vector<int>& notes)
+{
+    Case c { "modulated_pad_8voices", {}, notes };
+    c.params = patches::modulatedPad (c.routing);
+    return c;
+}
 
 int main (int argc, char** argv)
 {
@@ -49,6 +57,7 @@ int main (int argc, char** argv)
         { "pad_8voices", patches::pad(), chord8 },
         { "supersaw_8voices", patches::supersaw(), chord8 },
         { "wavetable_pad_8voices", patches::wavetablePad(), chord8 },
+        modulated (chord8),
         { "utility_8voices", patches::withUtility(), chord8 },
         { "crossmod_8voices", patches::crossMod(), chord8 },
         { "wavetable_heavy_16voices", patches::wavetableHeavy(),
@@ -63,6 +72,8 @@ int main (int argc, char** argv)
         SynthCore s;
         s.setSampleRate ((float) sr);
         s.params = c.params;
+        s.setRouting (c.routing);
+        s.setModWheel (0.5f);
 
         const int frames = (int) (seconds * sr);
         std::vector<float> l ((size_t) frames), r ((size_t) frames);
