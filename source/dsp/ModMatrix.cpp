@@ -131,6 +131,21 @@ std::vector<ModDest> build()
         add ("rand" + i + "_dist", "Random " + i + " Distance", 0, 1, false, [k] (SynthParams& s) -> float& { return s.random[k].distance; });
         add ("comb" + i + "_amount", "Combinator " + i + " Amount", 0, 1, false, [k] (SynthParams& s) -> float& { return s.comb[k].amount; });
     }
+    // FX section (global destinations).
+    const size_t firstFx = d.size();
+    static const char* const kSlotNames[9] = { "a1", "a2", "a3", "b1", "b2", "b3", "x1", "x2", "x3" };
+    static const char* const kSlotLabels[9] = { "FX A1", "FX A2", "FX A3", "FX B1", "FX B2", "FX B3", "Aux 1", "Aux 2", "Aux 3" };
+    for (size_t sl = 0; sl < 9; ++sl)
+        for (size_t k = 0; k < (size_t) fx::kFxParams; ++k)
+            add (std::string ("fx_") + kSlotNames[sl] + "_p" + std::to_string (k + 1),
+                 std::string (kSlotLabels[sl]) + " Param " + std::to_string (k + 1), 0, 1, false,
+                 [sl, k] (SynthParams& s) -> float& { return s.fx.slot[sl].p[k]; });
+    add ("fx_a_vol", "FX Bus A Volume", 0, 1.5f, false, [] (SynthParams& s) -> float& { return s.fx.busVolume[0]; });
+    add ("fx_b_vol", "FX Bus B Volume", 0, 1.5f, false, [] (SynthParams& s) -> float& { return s.fx.busVolume[1]; });
+    add ("fx_aux_send", "Aux Send", 0, 1, false, [] (SynthParams& s) -> float& { return s.fx.auxSend; });
+    add ("fx_aux_return", "Aux Return", 0, 1, false, [] (SynthParams& s) -> float& { return s.fx.auxReturn; });
+    for (size_t i = firstFx; i < d.size(); ++i)
+        d[i].global = true;
     return d;
 }
 

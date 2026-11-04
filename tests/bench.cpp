@@ -10,6 +10,9 @@
 #include "Patches.h"
 #include "WavWriter.h"
 #include "dsp/SynthCore.h"
+#include "dsp/fx/FxHost.h"
+
+#include <array>
 
 #include <chrono>
 #include <cstdio>
@@ -25,7 +28,42 @@ struct Case
     SynthParams params;
     std::vector<int> notes;
     ModRouting routing {};
+    std::array<int, fx::kNumFxSlots> fxTypes {}; // A1 A2 A3 B1 B2 B3 Aux1 Aux2 Aux3
 };
+
+// Puts effects in the slots with their default settings (aux slots 100 % wet).
+static void setupFx (Case& c, std::array<int, fx::kNumFxSlots> types, float auxSend)
+{
+    c.fxTypes = types;
+    for (size_t sl = 0; sl < types.size(); ++sl)
+    {
+        auto& sp = c.params.fx.slot[sl];
+        sp.type = types[sl];
+        const auto& info = fx::fxInfo (types[sl]);
+        for (size_t k = 0; k < (size_t) fx::kFxParams; ++k)
+        {
+            sp.p[k] = info.defaults[k];
+            if (sl >= 6 && info.params[k] != nullptr && std::string (info.params[k]) == "Dry/Wet")
+                sp.p[k] = 1.0f;
+        }
+    }
+    c.params.fx.auxSend = auxSend;
+}
+
+static Case padWithFx (const std::vector<int>& notes)
+{
+    Case c { "pad_fx_chorus_delay_verb", patches::pad(), notes };
+    setupFx (c, { fx::FxChorus, fx::FxDelay, 0, 0, 0, 0, fx::FxReverb, 0, 0 }, 0.4f);
+    return c;
+}
+
+static Case allFxSlots (const std::vector<int>& notes)
+{
+    Case c { "pad_fx_all_9_slots", patches::pad(), notes };
+    setupFx (c, { fx::FxDistortion, fx::FxVintageChorus, fx::FxPhaser, fx::FxCompressor, fx::FxTapeEcho,
+                  fx::FxParamEq, fx::FxShimmer, fx::FxReverb, fx::FxPitchDelay }, 0.5f);
+    return c;
+}
 
 static Case modulated (const std::vector<int>& notes)
 {
@@ -65,6 +103,8 @@ int main (int argc, char** argv)
           { 36, 43, 48, 52, 55, 59, 60, 62, 64, 67, 69, 71, 72, 74, 76, 79 } },
         { "worstcase_16voices", patches::worstCase(),
           { 36, 43, 48, 52, 55, 59, 60, 62, 64, 67, 69, 71, 72, 74, 76, 79 } },
+        padWithFx (chord8),
+        allFxSlots (chord8),
     };
 
     std::printf ("%-26s %10s %12s   (best of 3)\n", "patch", "us/block", "% one core");
@@ -76,6 +116,8 @@ int main (int argc, char** argv)
         s.params = c.params;
         s.setRouting (c.routing);
         s.setModWheel (0.5f);
+        fx::FxHost fxHost (s.getFxRack());
+        fxHost.rebuild (c.fxTypes.data(), (float) sr);
 
         const int frames = (int) (seconds * sr);
         std::vector<float> l ((size_t) frames), r ((size_t) frames);
@@ -85,6 +127,7 @@ int main (int argc, char** argv)
         for (int run = 0; run < 3; ++run)
         {
             s.reset();
+            fxHost.rebuild (c.fxTypes.data(), (float) sr); // fresh effect state (tails) each run
             s.setRouting (c.routing);
             for (int n : c.notes)
                 s.noteOn (n, 0.85f);

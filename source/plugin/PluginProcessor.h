@@ -4,11 +4,12 @@
 #include "dsp/Content.h"
 #include "dsp/ModMatrix.h"
 #include "dsp/SynthCore.h"
+#include "dsp/fx/FxHost.h"
 
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 
-class ChurchSynthProcessor final : public juce::AudioProcessor
+class ChurchSynthProcessor final : public juce::AudioProcessor, private juce::Timer
 {
 public:
     ChurchSynthProcessor();
@@ -55,8 +56,19 @@ public:
     cs::ModRouting getRoutes() const;
     void setRoutes (const cs::ModRouting& r);
 
+    // FX: create effects for the current slot types (message thread). Exposed for tests.
+    void syncEffects();
+
 private:
-    cs::SynthCore synth;
+    std::unique_ptr<cs::SynthCore> synthPtr = std::make_unique<cs::SynthCore>(); // ~1 MB: heap
+    cs::SynthCore& synth = *synthPtr;
+    cs::fx::FxHost fxHost { synth.getFxRack() };
+    juce::CriticalSection fxLock; // FxHost is touched from the timer, prepareToPlay and state loads (never the audio thread)
+    int lastFxType[cs::fx::kNumFxSlots] {};
+    double currentRate = 48000.0;
+    void timerCallback() override;
+    void readFxTypes (int* types) const;
+    void applyFxDefaults (int slot, int type);
     std::vector<std::atomic<float>*> rawParams;
     juce::AudioFormatManager formats;
 

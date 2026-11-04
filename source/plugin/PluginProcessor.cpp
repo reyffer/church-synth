@@ -41,10 +41,63 @@ ChurchSynthProcessor::ChurchSynthProcessor()
     refreshContent(); // defaults ready before the first block
     loader = std::make_unique<Loader> (*this);
     loader->startThread (juce::Thread::Priority::low);
+
+    readFxTypes (lastFxType);
+    fxHost.rebuild (lastFxType, (float) currentRate);
+    startTimerHz (20);
+}
+
+// --- FX ----------------------------------------------------------------------
+namespace
+{
+const char* const kFxSlotIds[9] = { "a1", "a2", "a3", "b1", "b2", "b3", "x1", "x2", "x3" };
+juce::String fxParamId (int slot, const char* suffix) { return juce::String ("fx_") + kFxSlotIds[slot] + "_" + suffix; }
+} // namespace
+
+void ChurchSynthProcessor::readFxTypes (int* types) const
+{
+    for (int sl = 0; sl < cs::fx::kNumFxSlots; ++sl)
+        types[sl] = (int) std::lround (apvts.getRawParameterValue (fxParamId (sl, "type"))->load());
+}
+
+// New effect picked in a slot: load that effect's default settings
+// (Aux slots default to 100 % wet, as send effects should be).
+void ChurchSynthProcessor::applyFxDefaults (int slot, int type)
+{
+    const auto& info = cs::fx::fxInfo (type);
+    for (int k = 0; k < cs::fx::kFxParams; ++k)
+    {
+        float v = info.defaults[(size_t) k];
+        if (slot >= 6 && info.params[(size_t) k] != nullptr && juce::String (info.params[(size_t) k]) == "Dry/Wet")
+            v = 1.0f;
+        if (auto* prm = apvts.getParameter (fxParamId (slot, ("p" + juce::String (k + 1)).toRawUTF8())))
+            prm->setValueNotifyingHost (prm->convertTo0to1 (v));
+    }
+}
+
+void ChurchSynthProcessor::syncEffects()
+{
+    const juce::ScopedLock fxScope (fxLock);
+    int types[cs::fx::kNumFxSlots];
+    readFxTypes (types);
+    for (int sl = 0; sl < cs::fx::kNumFxSlots; ++sl)
+        if (types[sl] != lastFxType[sl])
+        {
+            if (types[sl] != cs::fx::FxNone)
+                applyFxDefaults (sl, types[sl]);
+            lastFxType[sl] = types[sl];
+        }
+    fxHost.sync (types, (float) currentRate, synth.getRenderEpoch());
+}
+
+void ChurchSynthProcessor::timerCallback()
+{
+    syncEffects();
 }
 
 ChurchSynthProcessor::~ChurchSynthProcessor()
 {
+    stopTimer();
     loader->stopThread (2000);
 }
 
@@ -55,7 +108,13 @@ bool ChurchSynthProcessor::isBusesLayoutSupported (const BusesLayout& layouts) c
 
 void ChurchSynthProcessor::prepareToPlay (double sampleRate, int)
 {
+    currentRate = sampleRate;
     synth.setSampleRate ((float) sampleRate);
+    {
+        const juce::ScopedLock fxScope (fxLock);
+        readFxTypes (lastFxType);
+        fxHost.rebuild (lastFxType, (float) sampleRate); // audio is stopped here: safe to rebuild
+    }
     pullParameters();
 }
 
@@ -413,7 +472,11 @@ void ChurchSynthProcessor::setStateInformation (const void* data, int sizeInByte
             const auto routes = routesFromTree (tree.getChildWithName ("ROUTES"));
             apvts.replaceState (tree);
             setRoutes (routes);
-            refreshContent(); // resolve now so an offline bounce starts with the right sound
+            refreshContent();
+            // Loaded effect types keep their saved settings (no defaults applied).
+            const juce::ScopedLock fxScope (fxLock);
+            readFxTypes (lastFxType);
+            fxHost.sync (lastFxType, (float) currentRate, synth.getRenderEpoch()); // resolve now so an offline bounce starts with the right sound
         }
 }
 

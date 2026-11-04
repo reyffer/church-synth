@@ -580,6 +580,8 @@ private:
         {
             const int d = routing.touched[i];
             const auto& dest = dests[(size_t) d];
+            if (dest.global)
+                continue; // FX parameters are modulated once in SynthCore, not per voice
             float& f = dest.ref (local);
             f = dest.fromNorm (dest.toNorm (f) + add[i]);
             if (d == coarseDest[0]) coarseTouched[0] = true;

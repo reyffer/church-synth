@@ -3,6 +3,7 @@
 #include "dsp/Content.h"
 #include "dsp/ModMatrix.h"
 #include "dsp/ModSources.h"
+#include "dsp/fx/Effects.h"
 
 namespace cs
 {
@@ -369,6 +370,44 @@ void addModulation (Builder& b)
     b.integer ("u_osc_q_mask", "Utility Osc Quantize Notes", 1, 4095, 4095, [] (SynthParams& s, float v) { s.utilityQuantMask = asInt (v); });
 }
 
+juce::StringArray fxTypeNames()
+{
+    juce::StringArray a;
+    for (int t = 0; t < fx::FxTypeCount; ++t)
+        a.add (fx::fxInfo (t).name);
+    return a;
+}
+
+void addFx (Builder& b)
+{
+    static const char* const kSlotIds[9] = { "a1", "a2", "a3", "b1", "b2", "b3", "x1", "x2", "x3" };
+    static const char* const kSlotNames[9] = { "FX A1", "FX A2", "FX A3", "FX B1", "FX B2", "FX B3", "Aux 1", "Aux 2", "Aux 3" };
+
+    b.group = "FX Buses";
+    b.choice ("fx_routing", "FX Routing", juce::StringArray { "A > B", "B > A", "A // B" }, fx::RouteAthenB,
+              [] (SynthParams& s, float v) { s.fx.routing = asInt (v); });
+    b.boolean ("fx_a_on", "FX Bus A On", true, [] (SynthParams& s, float v) { s.fx.busOn[0] = asBool (v); });
+    b.boolean ("fx_b_on", "FX Bus B On", true, [] (SynthParams& s, float v) { s.fx.busOn[1] = asBool (v); });
+    b.boolean ("fx_aux_on", "Aux Bus On", true, [] (SynthParams& s, float v) { s.fx.busOn[2] = asBool (v); });
+    b.flt ("fx_a_vol", "FX Bus A Volume", 0, 1.5f, 1, [] (SynthParams& s, float v) { s.fx.busVolume[0] = v; });
+    b.flt ("fx_b_vol", "FX Bus B Volume", 0, 1.5f, 1, [] (SynthParams& s, float v) { s.fx.busVolume[1] = v; });
+    b.flt ("fx_aux_send", "Aux Send", 0, 1, 0, [] (SynthParams& s, float v) { s.fx.auxSend = v; });
+    b.flt ("fx_aux_return", "Aux Return", 0, 1, 1, [] (SynthParams& s, float v) { s.fx.auxReturn = v; });
+    b.boolean ("fx_aux_pre", "Aux Pre A/B", false, [] (SynthParams& s, float v) { s.fx.auxPre = asBool (v); });
+
+    for (size_t sl = 0; sl < 9; ++sl)
+    {
+        b.group = sl < 3 ? "FX Bus A" : sl < 6 ? "FX Bus B" : "Aux Bus";
+        const juce::String p = juce::String ("fx_") + kSlotIds[sl] + "_", n = juce::String (kSlotNames[sl]) + " ";
+        b.boolean (p + "on", n + "On", true, [sl] (SynthParams& s, float v) { s.fx.slot[sl].on = asBool (v); });
+        b.choice (p + "type", n + "Effect", fxTypeNames(), fx::FxNone, [sl] (SynthParams& s, float v) { s.fx.slot[sl].type = asInt (v); });
+        b.boolean (p + "sync", n + "Sync", false, [sl] (SynthParams& s, float v) { s.fx.slot[sl].sync = asBool (v); });
+        for (size_t k = 0; k < (size_t) fx::kFxParams; ++k)
+            b.flt (p + "p" + juce::String ((int) k + 1), n + "Param " + juce::String ((int) k + 1), 0, 1, 0.5f,
+                   [sl, k] (SynthParams& s, float v) { s.fx.slot[sl].p[k] = v; });
+    }
+}
+
 std::vector<ParamDef> build()
 {
     Builder b;
@@ -414,6 +453,7 @@ std::vector<ParamDef> build()
     b.boolean ("hold", "Hold", false, [] (SynthParams& s, float v) { s.hold = asBool (v); });
 
     addModulation (b);
+    addFx (b);
 
     b.group = "Master";
     b.flt ("master_vol", "Master Volume", 0, 1, 0.8f, [] (SynthParams& s, float v) { s.masterVolume = v; });

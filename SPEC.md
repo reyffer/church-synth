@@ -205,6 +205,33 @@ Hold (acts like sustain, also latches seq/arp), Transpose (octave, fine; fine is
 | | **Phaser** | Freq, Feedback, LFO wave (6), Amount, Rate/sync, Poles, Stereo, Dry/Wet |
 | | **Panner** | Amount, Rate/sync, Invert, Mono-bass + cutoff, Natural/Linear |
 
+### 6.3 Effect controls (as built)
+Every slot has On, Effect type, Sync and 12 generic controls (`fx_<slot>_p1..p12`, slots `a1..a3`, `b1..b3`, `x1..x3`). What each control means depends on the effect (below, in order). Choosing an effect loads its defaults; Aux slots start 100 % wet. Echoes, reverbs and choruses use an equal-power Dry/Wet so inserting them keeps the loudness steady; the others use a linear one. With Sync on, the control marked † becomes a note division.
+
+| Effect | Controls |
+|---|---|
+| Delay | Time†, Fine (±30 ms), Feedback, Low Cut, High Cut, Width, Ping-Pong, Dry/Wet |
+| Tape Echo | Time†, Fine, Intensity, Input Drive, Wow & Flutter, Width, Ping-Pong, Dry/Wet |
+| Pitch Shift Delay | Time†, Pitch (±12 st), Feedback, Harmonize (normal / + oct up / + oct down), Spray, Stereo Detune, Tone, Dry/Wet |
+| Reverb | Pre-Delay, Size, Decay, Damping, Low Cut, High Cut, Width, Dry/Wet (8-line feedback delay network) |
+| Shimmer | Pitch, Shimmer (pitched feedback), Size, Decay, Modulation, High Cut, Ducking, Width, Dry/Wet |
+| Compressor | Threshold, Ratio, Attack, Release, Makeup, Auto Makeup, Output, Dry/Wet |
+| Multiband | Low X-Over, High X-Over, Amount (down + up compression, auto make-up), Attack, Release, Low / Mid / High Out, Output |
+| Multi Filter | Type (LP/HP/BP 12/24/36, Notch, Comb FF, Comb FB), Cutoff, Resonance, Dry/Wet |
+| Param EQ | Low Shelf Freq/Gain, Peak 1/2/3 Freq/Gain, High Shelf Freq/Gain, Peak Q (shared), Scale |
+| Distortion | Type (Soft Clip, Hard Clip, Tube, Tape, Overdrive, Fuzz, Crunch, Diode, Sine Fold, Triangle Fold, Half Rectify, Full Rectify, Asymmetric, Bit Shape, Saturate, Destroy), Drive, Auto Gain, Output, Filter (off/pre/post), Filter Type (LP/HP/BP), Cutoff, Resonance, Slope (12/24/36), Dark, Dry/Wet. 2× oversampled |
+| Bitcrusher | Bit Depth, Downsample, Jitter, Low Cut, High Cut, Dry/Wet |
+| Erode | Mod Type (sine/tri/saw/square/noise), Frequency, Amount, Noise Blend, Band Freq, Bandwidth, Spread, Drive, Dry/Wet |
+| Super Unison | Voices (2–8), Detune, Drift, Width, Low Cut, High Cut, Dry/Wet |
+| Chorus | Delay, Depth, Rate†, Feedback, Voices (1–4), Shape (sine/square), Stereo, Dry/Wet |
+| Vintage Chorus | Mode (I / II / I+II), Rate, Depth, Phase, Dry/Wet |
+| Flanger | Delay, Depth, Rate†, Feedback (negative below centre), Low Cut, High Cut, Stereo, Shape (sine/tri), Dry/Wet |
+| Vintage Flanger | Rate†, Delay, Feedback, Depth, Wide, Mono Input, Dry/Wet |
+| Phaser | Frequency, Feedback, LFO Wave (6), Depth, Rate†, Poles (2–12), Stereo, Dry/Wet |
+| Panner | Amount, Rate†, Invert, Mono Bass, Bass Cutoff, Natural Law, Shape (sine/tri/square-ish) |
+
+Bus controls: `fx_routing` (A>B, B>A, A//B), `fx_a_on`, `fx_b_on`, `fx_aux_on`, `fx_a_vol`, `fx_b_vol` (0–150 %), `fx_aux_send`, `fx_aux_return`, `fx_aux_pre`. Every slot control, bus volume and the aux send/return are modulation destinations (evaluated once per block, from global sources only: per-voice sources like Env 2 use the newest voice).
+
 **Decision:** all effects stay except the Vocoder. It was dropped together with external audio input, and without a mic or track input it has little to work with.
 
 ## 7. Sequencer / Arpeggiator
@@ -276,6 +303,7 @@ Hold (acts like sustain, also latches seq/arp), Transpose (octave, fine; fine is
 | 2026-11-04 | Pigments layout, our own artwork, dark only. |
 | 2026-11-04 | AU + VST3 (Mac and Windows) from Milestone 1; AU is the live reference. |
 | 2026-11-04 | Milestone 1 done. Standalone opens all MIDI inputs automatically (Windows standalone didn't receive MIDI). |
+| 2026-11-04 | Milestone 5 done: FX A / FX B (3 slots each, A>B, B>A, A//B, bus volumes), Aux bus (3 slots, send/return, pre/post), 19 effects (§6.3), tempo sync, FX controls as modulation destinations. Effects are created off the audio thread when a slot's type changes and swapped in atomically. Effect type order is permanent (append only). Interim until the UI milestone: an FX tab with generic knobs; per-effect presets, drag-to-swap and copy-to-slot move to M7; Param EQ peaks share one Q; the Erode modulator is an internal oscillator/noise (no engine or filter sources yet). |
 | 2026-11-04 | Milestone 4 done: 15 filter models (Classic, Cluster, Phaser, Formant, Surgeon, LoFi, Comb, Drive, Allpass, Ladder, Sallen-Key, OTA 4-Pole, SVF Morph, Multimode, Lowpass Gate), audio-rate filter FM (Engine 1, Engine 2, Utility, Noise), Sum / Split / Split Reversed output. Each filter exposes Model, Model Mode, Cutoff, Resonance, Drive and Controls A/B/C; what A/B/C do per model is listed in §4.4 (the UI milestone labels them per model). Voices now write to Main / FX A / FX B / Direct buses, summed until the FX milestone. |
 | 2026-11-04 | Milestone 3 done: Env 2/3, 3 LFOs, 3 Functions (16 preset shapes), 3 Random (5 types), 3 Combinators (10 types), 4 Macros, 64-route matrix with sidechains, amp mod source, Mod Quantize, aftertouch (channel + poly), CC11, tempo sync. Interim until the UI milestone: functions use preset shapes (drawing editor in M7), keyboard curves are a single bend control (2-point editor in M7), quantize notes are a 12-bit mask (mini-keyboard in M7), routes are edited in a list (drag-and-drop in M7). Filter FM source menu moves to M4 with the filters. |
 | 2026-11-04 | Milestone 2 done: Wavetable + Utility engines, cross-mod, 40 generated wavetables, 34 generated noises, WAV import. Phase-transform shapes are our own set: Pulse Width, Skew, Mirror, Sync, Steps, Bend, Squeeze. Wavetable/noise list order is permanent (append only). |

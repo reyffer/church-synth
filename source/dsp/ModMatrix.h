@@ -24,6 +24,7 @@ struct ModDest
     float min, max;
     bool logScale; // modulate in log space (frequencies, times)
     std::function<float& (SynthParams&)> ref;
+    bool global = false; // FX / output parameters: evaluated once, not per voice
 
     float toNorm (float v) const noexcept;
     float fromNorm (float n) const noexcept;

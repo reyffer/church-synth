@@ -4,6 +4,9 @@
 // Real-time safe: no allocation, locks or I/O after setSampleRate().
 
 #include "Voice.h"
+#include "fx/FxRack.h"
+
+#include <atomic>
 
 namespace cs
 {
@@ -43,6 +46,10 @@ public:
 
     int activeVoiceCount() const noexcept;
 
+    // FX: effect objects are owned by an fx::FxHost (see FxHost.h) bound to this rack.
+    fx::FxRack& getFxRack() noexcept { return fxRack; }
+    uint64_t getRenderEpoch() const noexcept { return renderEpoch.load (std::memory_order_acquire); }
+
 private:
     float sampleRate = 48000.0f;
     Voice voices[kMaxVoices];
@@ -72,6 +79,11 @@ private:
     bool sustainPedal = false, holdLatched = false;
     float lastPitch = 60.0f;
     static constexpr int kMaxChunk = 2048;
+    fx::FxRack fxRack;
+    std::atomic<uint64_t> renderEpoch { 0 };
+    SynthParams fxScratch; // params with global (FX) modulation applied
+    float globalSourceValue (int s) const noexcept;
+    const fx::FxParams& modulatedFxParams() noexcept;
     float bus[NumVoiceBuses][2][kMaxChunk] {};
 
     // Mono note stack (most recent last).

@@ -429,12 +429,74 @@ void SynthCore::renderChunk (float* outL, float* outR, int n) noexcept
     }
     transport.ppq += ppqPerSample * n; // keeps free-running sync coherent if the host doesn't update it
 
-    // Until the FX stage exists, every bus goes straight to the output.
-    const float g = params.masterVolume * kVoiceGain;
+    // FX section: buses (scaled for headroom) -> A / B / Aux -> master.
+    for (auto& b : bus)
+        for (auto& ch : b)
+            for (int i = 0; i < n; ++i)
+                ch[i] *= kVoiceGain;
+    const fx::FxInputs in { bus[BusMain][0], bus[BusMain][1], bus[BusFxA][0], bus[BusFxA][1],
+                            bus[BusFxB][0], bus[BusFxB][1], bus[BusDirect][0], bus[BusDirect][1] };
+    fx::FxContext ctx;
+    ctx.bpm = transport.bpm;
+    fxRack.process (modulatedFxParams(), in, outL, outR, n, ctx);
+    const float g = params.masterVolume;
     for (int i = 0; i < n; ++i)
     {
-        outL[i] = (bus[BusMain][0][i] + bus[BusFxA][0][i] + bus[BusFxB][0][i] + bus[BusDirect][0][i]) * g;
-        outR[i] = (bus[BusMain][1][i] + bus[BusFxA][1][i] + bus[BusFxB][1][i] + bus[BusDirect][1][i]) * g;
+        outL[i] *= g;
+        outR[i] *= g;
     }
+    renderEpoch.fetch_add (1, std::memory_order_acq_rel);
+}
+
+float SynthCore::globalSourceValue (int s) const noexcept
+{
+    switch (s)
+    {
+        case SrcModWheel: return modWheel;
+        case SrcAftertouch: return channelPressure;
+        case SrcExpression: return expression;
+        default: break;
+    }
+    if (s >= SrcMacro1 && s <= SrcMacro4) return params.macro[(size_t) (s - SrcMacro1)];
+    if (s >= SrcLfo1 && s <= SrcLfo3 && global.lfoIsGlobal[s - SrcLfo1]) return global.lfo[s - SrcLfo1];
+    if (s >= SrcFunc1 && s <= SrcFunc3 && global.funcIsGlobal[s - SrcFunc1]) return global.func[s - SrcFunc1];
+    if (s >= SrcRand1 && s <= SrcRand3 && global.randIsGlobal[s - SrcRand1]) return global.rnd[s - SrcRand1];
+    // Per-voice sources: follow the most recently played voice.
+    return voices[lastStarted].sourceValue (s);
+}
+
+// FX parameters are global, so routes to them are evaluated once per chunk
+// (per-voice sources follow the most recently played note).
+const fx::FxParams& SynthCore::modulatedFxParams() noexcept
+{
+    const auto& dests = modDestinations();
+    bool any = false;
+    for (int r = 0; r < routing.count && ! any; ++r)
+        any = routing.slotOf[r] >= 0 && dests[(size_t) routing.routes[r].dest].global;
+    if (! any)
+        return params.fx;
+
+    fxScratch = params;
+    float add[kMaxRoutes] {};
+    for (int r = 0; r < routing.count; ++r)
+    {
+        const int slot = routing.slotOf[r];
+        const auto& rt = routing.routes[r];
+        if (slot < 0 || ! dests[(size_t) rt.dest].global)
+            continue;
+        float v = globalSourceValue (rt.source) * rt.amount;
+        if (rt.sidechain >= 0)
+            v *= 1.0f - rt.scAmount + rt.scAmount * globalSourceValue (rt.sidechain);
+        add[slot] += v;
+    }
+    for (int i = 0; i < routing.numTouched; ++i)
+    {
+        const auto& dest = dests[(size_t) routing.touched[i]];
+        if (! dest.global)
+            continue;
+        float& f = dest.ref (fxScratch);
+        f = dest.fromNorm (dest.toNorm (f) + add[i]);
+    }
+    return fxScratch.fx;
 }
 } // namespace cs

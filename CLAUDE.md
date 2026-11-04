@@ -25,13 +25,14 @@ ctest --test-dir build --output-on-failure   # DSP tests + plugin state test (ne
 CI (`.github/workflows/build.yml`): macOS universal AU/VST3/Standalone with auval and pluginval (strictness 7); Windows VST3/Standalone with pluginval. The Apple Silicon benchmark is posted to the run summary.
 
 ## Architecture
-- `SynthCore` → 16 `Voice`s → per voice: 2 engine slots (each `AnalogEngine` or `WavetableEngine`) + `UtilityEngine` → filter-mix split → 2 `MultiFilter`s (15 models incl. `ClassicFilter`; series↔parallel or Split) → amp `Envelope` → pan → buses Main / FX A / FX B / Direct (summed in `SynthCore::renderChunk` until the FX stage). Utility osc can bypass the filters (post buffer → its routed bus).
+- `SynthCore` → 16 `Voice`s → per voice: 2 engine slots (each `AnalogEngine` or `WavetableEngine`) + `UtilityEngine` → filter-mix split → 2 `MultiFilter`s (15 models incl. `ClassicFilter`; series↔parallel or Split) → amp `Envelope` → pan → buses Main / FX A / FX B / Direct → `FxRack` (in `SynthCore::renderChunk`) → master. Utility osc can bypass the filters (post buffer → its routed bus).
 - Filter models: `MultiFilter.h` (controls per model documented at the top and in SPEC §4.4). `FilterType` order is append-only. Feedback paths inside filters must stay bounded under audio-rate FM (soft-clip them).
 - Cross-mod: an engine's modulator can be the other engine's pre-volume output; the source engine renders first (mutual cross-mod uses the previous 16-sample block).
 - Content (`Content.h/.cpp`, `ContentFactory.cpp`): 40 wavetables + 34 noises synthesised in code, mip-mapped (11 levels), generated lazily and cached process-wide. The plugin's `Loader` thread resolves selections and user files into atomic pointers; the audio thread only reads pointers.
 - User files are copied to `Documents/Church Synth/Wavetables|Noises` and referenced by file name in the plugin state.
 - Modulation (`ModSources.h/.cpp`, `ModMatrix.h/.cpp`): per control block each voice computes only the sources something uses (`GlobalMod::used`), copies `SynthParams` into `local`, adds route offsets in each destination's normalised (knob) space, then renders with `local`. LFO/Function/Random in Mono/Legato/Free-running retrig use a single global instance in `SynthCore`; Poly Kbd uses per-voice instances. Source *settings* (e.g. LFO rate) read last block's modulated values.
 - Destinations use host parameter IDs; routes are saved by source name + destination ID in the plugin state (`ROUTES` child) and handed to the audio thread through a seqlock. Function/remap preset lists and sync divisions are append-only.
+- FX (`source/dsp/fx`): `FxRack` runs buses A / B / Aux (3 slots each) on the summed voice buses; `Effects.cpp` holds the 19 effects and the `kFxInfo` table (names, controls, defaults). `FxType` order is append-only. Effects are allocated on the message thread by `FxHost` (plugin timer / prepareToPlay / state load), published through atomic pointers and freed two render epochs later; the rack skips a slot whose effect doesn't match its type yet. FX modulation destinations are `global` (evaluated once per chunk in `SynthCore`). Echo/reverb/chorus effects use equal-power Dry/Wet; a test keeps default settings within ±1.5 dB.
 - Control rate = 16 samples (pitch, filter coefficients, envelope points); audio rate for oscillators, FM and filtering.
 - Oscillators use polyBLEP/polyBLAMP with one sample of latency, so hard sync is band-limited exactly.
 - Voice stealing does a 3 ms fade before the new note starts. Retriggering a sounding voice never resets oscillator phase.
@@ -41,10 +42,11 @@ CI (`.github/workflows/build.yml`): macOS universal AU/VST3/Standalone with auva
 2. ✅ Wavetable + Utility engines, cross-mod, generated wavetables/noises, WAV import.
 3. ✅ Modulation system (envs, LFOs, functions, random, combinators, macros, routing, sidechains).
 4. ✅ All filter types + Sum/Split routing.
-5. FX buses and all effects.
+5. ✅ FX buses and all effects.
 6. Seq/Arp.
 7. Presets/browser + Pigments-style UI (dark only).
 
 ## Performance notes
 - Benchmark baseline (x86 container, M1 numbers are in CI): analog pad 8 voices ≈ 5.5 %, wavetable pad ≈ 3.5 %, worst case ≈ 29 % of one core. Content generation for everything ≈ 2.4 s total, but only what's selected is generated.
+- FX cost (same container): chorus + delay + reverb ≈ 1.5 % of a core; all 9 slots busy ≈ 8 %. The bench has `pad_fx_*` cases.
 - Planned optimisation: process 4 unison sub-voices with SIMD (NEON/SSE), skip silent engines entirely (already done), cheaper sine.

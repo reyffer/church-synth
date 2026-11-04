@@ -6,6 +6,7 @@
 #include "dsp/WavetableEngine.h"
 #include "dsp/ModMatrix.h"
 #include "dsp/ModSources.h"
+#include "dsp/fx/FxHost.h"
 
 #include <cmath>
 #include <cstdio>
@@ -835,8 +836,240 @@ static void testSplitRoutingKeepsBothFilters()
     }
 }
 
+// --- Milestone 5: FX ---------------------------------------------------------
+
+struct FxRig
+{
+    std::unique_ptr<SynthCore> core = std::make_unique<SynthCore>();
+    fx::FxHost host { core->getFxRack() };
+    int types[fx::kNumFxSlots] {};
+
+    explicit FxRig (float sr = 48000.0f) { core->setSampleRate (sr); }
+    void setSlot (int slot, int type)
+    {
+        types[slot] = type;
+        auto& sp = core->params.fx.slot[(size_t) slot];
+        sp.type = type;
+        const auto& info = fx::fxInfo (type);
+        for (int k = 0; k < fx::kFxParams; ++k)
+            sp.p[(size_t) k] = info.defaults[(size_t) k];
+        host.rebuild (types, 48000.0f);
+    }
+};
+
+static void testEveryEffectRenders()
+{
+    for (int type = 1; type < fx::FxTypeCount; ++type)
+        for (int variant = 0; variant < 4; ++variant)
+        {
+            FxRig rig;
+            auto& s = *rig.core;
+            rig.setSlot (0, type);
+            auto& sp = s.params.fx.slot[0];
+            Rng rng;
+            rng.seed ((uint32_t) (type * 31 + variant));
+            if (variant > 0) // random settings, including extremes
+                for (auto& v : sp.p)
+                    v = variant == 3 ? (rng.uni() < 0.5f ? 0.0f : 1.0f) : rng.uni();
+            sp.sync = variant == 2;
+            s.params.engine[0].noiseVolume = 0.3f;
+            s.noteOn (48, 1.0f);
+            s.noteOn (55, 1.0f);
+            const auto st = renderStats (s, 48000);
+            s.allNotesOff();
+            const auto tail = renderStats (s, 96000);
+            char msg[128];
+            std::snprintf (msg, sizeof msg, "effect %s variant %d", fx::fxInfo (type).name, variant);
+            CHECK (st.finite && tail.finite, msg);
+            CHECK (st.peak < 8.0f && tail.peak < 8.0f, msg);
+        }
+}
+
+// Inserting an echo, reverb, chorus or EQ at its default settings must not
+// change the loudness much (no surprise level drops when building a sound live).
+static void testFxDefaultsKeepLevel()
+{
+    auto loudnessDb = [] (int type)
+    {
+        FxRig rig;
+        auto& s = *rig.core;
+        s.params = patches::pad();
+        rig.setSlot (0, type);
+        for (int n : { 48, 55, 60, 64, 67, 71, 74, 79 })
+            s.noteOn (n, 0.85f);
+        std::vector<float> l (48000 * 3), r (48000 * 3);
+        for (size_t p = 0; p < l.size(); p += 128)
+            s.render (l.data() + p, r.data() + p, 128);
+        double e = 0.0;
+        for (size_t i = 48000; i < l.size(); ++i)
+            e += (double) l[i] * l[i] + (double) r[i] * r[i];
+        return 10.0 * std::log10 (e + 1.0e-20);
+    };
+    const double dry = loudnessDb (fx::FxNone);
+    for (int type : { fx::FxDelay, fx::FxTapeEcho, fx::FxPitchDelay, fx::FxReverb, fx::FxShimmer, fx::FxMultiband,
+                      fx::FxParamEq, fx::FxBitcrusher, fx::FxSuperUnison, fx::FxChorus, fx::FxVintageChorus,
+                      fx::FxFlanger, fx::FxPanner })
+    {
+        const double d = loudnessDb (type) - dry;
+        char msg[128];
+        std::snprintf (msg, sizeof msg, "%s at defaults changes level by %.1f dB", fx::fxInfo (type).name, d);
+        CHECK (std::abs (d) < 1.5, msg);
+    }
+}
+
+// Impulse through a slot: returns energy in [from, to) seconds.
+static float impulseEnergy (int type, std::array<float, fx::kFxParams> p, float from, float to)
+{
+    fx::FxRack rack;
+    fx::FxHost host (rack);
+    int types[fx::kNumFxSlots] {};
+    types[0] = type;
+    host.rebuild (types, 48000.0f);
+    fx::FxParams fp;
+    fp.slot[0].type = type;
+    fp.slot[0].p = p;
+    const int n = 48000 * 3;
+    std::vector<float> inL ((size_t) n, 0.0f), inR ((size_t) n, 0.0f), zero ((size_t) n, 0.0f), oL ((size_t) n), oR ((size_t) n);
+    inL[0] = inR[0] = 1.0f;
+    fx::FxContext ctx;
+    for (int pos = 0; pos < n; pos += 512)
+    {
+        const fx::FxInputs in { inL.data() + pos, inR.data() + pos, zero.data() + pos, zero.data() + pos,
+                                zero.data() + pos, zero.data() + pos, zero.data() + pos, zero.data() + pos };
+        rack.process (fp, in, oL.data() + pos, oR.data() + pos, std::min (512, n - pos), ctx);
+    }
+    double e = 0.0;
+    for (int i = (int) (from * 48000); i < (int) (to * 48000) && i < n; ++i)
+        e += oL[(size_t) i] * oL[(size_t) i] + oR[(size_t) i] * oR[(size_t) i];
+    return (float) e;
+}
+
+static void testDelayAndReverbBehave()
+{
+    auto d = fx::fxInfo (fx::FxDelay).defaults;
+    d[0] = std::log (250.0f) / std::log (2000.0f); // 250 ms
+    d[7] = 1.0f;
+    CHECK (impulseEnergy (fx::FxDelay, d, 0.24f, 0.26f) > 0.1f, "delay repeats at 250 ms");
+    CHECK (impulseEnergy (fx::FxDelay, d, 0.1f, 0.2f) < 1.0e-4f, "delay is silent before the first repeat");
+
+    auto rv = fx::fxInfo (fx::FxReverb).defaults;
+    rv[7] = 1.0f;
+    const float early = impulseEnergy (fx::FxReverb, rv, 0.05f, 0.5f);
+    const float late = impulseEnergy (fx::FxReverb, rv, 2.5f, 3.0f);
+    CHECK (early > 1.0e-3f, "reverb produces a tail");
+    CHECK (late < early * 0.05f, "reverb tail decays");
+
+    auto sh = fx::fxInfo (fx::FxShimmer).defaults;
+    sh[8] = 1.0f;
+    CHECK (impulseEnergy (fx::FxShimmer, sh, 0.05f, 1.0f) > 1.0e-3f, "shimmer produces a tail");
+}
+
+static void testCompressorReducesPeaks()
+{
+    FxRig rig;
+    auto& s = *rig.core;
+    s.params.engine[0].osc[0].volume = 1.0f;
+    s.noteOn (48, 1.0f);
+    renderStats (s, 4800);
+    const float dry = renderStats (s, 24000).rms;
+    rig.setSlot (0, fx::FxCompressor);
+    auto& p = s.params.fx.slot[0].p;
+    p[0] = 0.3f;  // threshold -42 dB
+    p[1] = 0.8f;  // high ratio
+    p[5] = 0.0f;  // no auto makeup
+    renderStats (s, 4800);
+    const float comp = renderStats (s, 24000).rms;
+    CHECK (comp < dry * 0.5f, "compressor turns loud signals down");
+}
+
+static void testFxRoutingAndAux()
+{
+    for (int routing = 0; routing < fx::FxRoutingCount; ++routing)
+        for (bool pre : { false, true })
+        {
+            FxRig rig;
+            auto& s = *rig.core;
+            rig.setSlot (0, fx::FxChorus);
+            rig.setSlot (3, fx::FxDelay);
+            rig.setSlot (6, fx::FxReverb);
+            s.params.fx.slot[6].p[7] = 1.0f;
+            s.params.fx.routing = routing;
+            s.params.fx.auxSend = 0.5f;
+            s.params.fx.auxPre = pre;
+            s.params.filterOutput = routing == 2 ? RoutingSplit : RoutingSum;
+            s.params.filter[1].on = true;
+            s.params.engine[0].filterMix = 0.5f;
+            s.noteOn (60, 1.0f);
+            const auto st = renderStats (s, 24000);
+            CHECK (st.finite && st.rms > 0.01f && st.peak < 4.0f, "FX routing renders");
+        }
+
+    // Aux send off = no aux effect; on = reverb tail after the note stops.
+    for (float send : { 0.0f, 0.8f })
+    {
+        FxRig rig;
+        auto& s = *rig.core;
+        rig.setSlot (6, fx::FxReverb);
+        s.params.fx.slot[6].p[7] = 1.0f;
+        s.params.fx.slot[6].p[2] = 0.7f;
+        s.params.fx.auxSend = send;
+        s.params.ampEnv.release = 0.01f;
+        s.noteOn (60, 1.0f);
+        renderStats (s, 24000);
+        s.noteOff (60);
+        renderStats (s, 4800);
+        const float tail = renderStats (s, 12000).rms;
+        CHECK (send > 0.0f ? tail > 1.0e-3f : tail < 1.0e-5f, "aux reverb tail follows the send");
+    }
+}
+
+static void testFxModulationByMacro()
+{
+    FxRig rig;
+    auto& s = *rig.core;
+    rig.setSlot (0, fx::FxMultiFilter); // LP12 at default cutoff
+    auto& p = s.params.fx.slot[0].p;
+    p[1] = 0.2f; // dark
+    ModRouting r;
+    addRoute (r, SrcMacro1, "fx_a1_p2", 0.7f); // macro opens the FX filter
+    s.setRouting (r);
+    s.params.engine[0].osc[0].volume = 0.0f;
+    s.params.engine[0].noiseVolume = 1.0f;
+    s.noteOn (60, 1.0f);
+    renderStats (s, 4800);
+    const float closed = renderStats (s, 12000).rms;
+    s.params.macro[0] = 1.0f;
+    renderStats (s, 4800);
+    const float open = renderStats (s, 12000).rms;
+    CHECK (open > closed * 2.0f, "macro modulates an FX parameter");
+}
+
+static void testFxSwapIsSafe()
+{
+    // Changing effect types while audio runs: old effects are only freed after renders.
+    FxRig rig;
+    auto& s = *rig.core;
+    s.noteOn (60, 1.0f);
+    for (int k = 0; k < 40; ++k)
+    {
+        rig.types[0] = 1 + k % (fx::FxTypeCount - 1);
+        s.params.fx.slot[0].type = rig.types[0];
+        rig.host.sync (rig.types, 48000.0f, s.getRenderEpoch());
+        CHECK (renderStats (s, 512).finite, "audio keeps running while effects change");
+    }
+    rig.host.sync (rig.types, 48000.0f, s.getRenderEpoch() + 10);
+    CHECK (rig.host.pendingFrees() == 0, "replaced effects are freed after the audio moved on");
+}
+
 int main()
 {
+    testEveryEffectRenders();
+    testDelayAndReverbBehave();
+    testCompressorReducesPeaks();
+    testFxRoutingAndAux();
+    testFxModulationByMacro();
+    testFxSwapIsSafe();
+    testFxDefaultsKeepLevel();
     testAllFilterTypesStable();
     testFilterResponses();
     testLowpassGateCloses();

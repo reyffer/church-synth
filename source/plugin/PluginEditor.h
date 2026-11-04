@@ -3,6 +3,7 @@
 // Temporary editor (until the UI milestone):
 //   Sound      - every parameter, grouped
 //   Modulation - the routing matrix (source -> destination, amount, sidechain)
+//   FX         - bus routing and the nine effect slots
 //   Files      - user wavetables / noise samples
 
 #include "PluginProcessor.h"
@@ -46,6 +47,44 @@ private:
     void layoutRows();
 };
 
+// FX tab: bus controls on top, then the selected slot's effect and its controls.
+class FxPanel final : public juce::Component
+{
+public:
+    explicit FxPanel (ChurchSynthProcessor& p);
+    void resized() override;
+    void paint (juce::Graphics&) override;
+    void refresh(); // follow effect-type / sync changes (called from the editor timer)
+
+private:
+    using SliderAtt = juce::AudioProcessorValueTreeState::SliderAttachment;
+    using ButtonAtt = juce::AudioProcessorValueTreeState::ButtonAttachment;
+    using ComboAtt = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
+
+    ChurchSynthProcessor& proc;
+    // Bus section
+    juce::ComboBox routing;
+    juce::ToggleButton busOn[3], auxPre { "Aux pre A/B" };
+    juce::Slider busVol[2], auxSend, auxReturn;
+    juce::Label busLabels[4];
+    std::unique_ptr<ComboAtt> routingAtt;
+    std::unique_ptr<ButtonAtt> busOnAtt[3], auxPreAtt;
+    std::unique_ptr<SliderAtt> busVolAtt[2], auxSendAtt, auxReturnAtt;
+    // Slot section
+    juce::TextButton slotButtons[cs::fx::kNumFxSlots];
+    juce::ComboBox type;
+    juce::ToggleButton slotOn { "On" }, sync { "Sync" };
+    juce::Slider knobs[cs::fx::kFxParams];
+    juce::Label knobLabels[cs::fx::kFxParams];
+    std::unique_ptr<ComboAtt> typeAtt;
+    std::unique_ptr<ButtonAtt> slotOnAtt, syncAtt;
+    std::unique_ptr<SliderAtt> knobAtt[cs::fx::kFxParams];
+    int selected = 0, shownType = -1, shownSync = -1;
+
+    void select (int slot);
+    void updateLabels();
+};
+
 class ChurchSynthEditor final : public juce::AudioProcessorEditor, private juce::Timer
 {
 public:
@@ -67,6 +106,7 @@ private:
     juce::TabbedComponent tabs { juce::TabbedButtonBar::TabsAtTop };
     juce::GenericAudioProcessorEditor generic;
     RoutePanel routes;
+    FxPanel fxPanel;
     juce::Component files;
     ContentRow rows[ChurchSynthProcessor::NumContentSlots];
     std::unique_ptr<juce::FileChooser> chooser;

@@ -4,6 +4,8 @@
 // The plugin layer copies host parameters into this struct once per block.
 // No JUCE dependency, so the core can be tested and benchmarked on its own.
 
+#include "fx/FxParams.h"
+
 #include <array>
 
 namespace cs
@@ -336,6 +338,9 @@ struct SynthParams
     KeyCurves curves {};
     std::array<int, kNumEngines> coarseQuantMask { 0xFFF, 0xFFF }; // allowed intervals when Coarse is modulated
     int utilityQuantMask = 0xFFF;
+
+    // --- FX section (global, after the voices) ---------------------------------
+    fx::FxParams fx {};
 
     SynthParams()
     {
