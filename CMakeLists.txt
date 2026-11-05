@@ -119,12 +119,12 @@ if(CS_BUILD_PLUGIN)
     if(CS_BUILD_TESTS)
         # Plugin-level state test: a console app compiling the processor sources directly.
         juce_add_console_app(cs_state_test PRODUCT_NAME "cs_state_test")
-        target_sources(cs_state_test PRIVATE tests/state_test.cpp ${CS_PLUGIN_SOURCES})
-        target_include_directories(cs_state_test PRIVATE source)
+        target_sources(cs_state_test PRIVATE tests/state_test.cpp packs/Pack1.cpp ${CS_PLUGIN_SOURCES})
+        target_include_directories(cs_state_test PRIVATE source .)
         target_compile_definitions(cs_state_test PRIVATE
             JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
             "JucePlugin_Name=\"Church Synth\""
-            "JucePlugin_VersionString=\"test\"")
+            "JucePlugin_VersionString=\"${PROJECT_VERSION}\"")
         target_link_libraries(cs_state_test PRIVATE
             cs_dsp
             cs_binary_data

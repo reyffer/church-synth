@@ -5,6 +5,7 @@
 #include "plugin/PluginProcessor.h"
 #include "plugin/PresetManager.h"
 #include "dsp/fx/Effects.h"
+#include "packs/Packs.h"
 
 #include <cmath>
 #include <cstdio>
@@ -45,10 +46,261 @@ static void snapshotEditor (ChurchSynthProcessor& p, const juce::File& dir)
     ed->showView (3); shot ("browser");
 }
 
+
+// Plays `notes` for 4 s (then 2 s of release) and returns the output peak.
+static float playPeak (ChurchSynthProcessor& p, std::initializer_list<int> notes, bool* finite = nullptr)
+{
+    juce::AudioBuffer<float> buf (2, 512);
+    float peak = 0.0f;
+    bool ok = true;
+    const int blocks = (int) (48000.0 * 6.0 / 512.0);
+    for (int blk = 0; blk < blocks; ++blk)
+    {
+        juce::MidiBuffer midi;
+        if (blk == 2)
+            for (int n : notes)
+                midi.addEvent (juce::MidiMessage::noteOn (1, n, (juce::uint8) 100), 0);
+        if (blk == (int) (48000.0 * 4.0 / 512.0))
+            for (int n : notes)
+                midi.addEvent (juce::MidiMessage::noteOff (1, n), 0);
+        buf.clear();
+        p.processBlock (buf, midi);
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < 512; ++i)
+            {
+                const float v = buf.getSample (ch, i);
+                ok = ok && std::isfinite (v);
+                peak = std::max (peak, std::abs (v));
+            }
+    }
+    if (finite != nullptr)
+        *finite = ok;
+    return peak;
+}
+
+// --export-pack <dir>: writes every preset pack as .csp files, level-matched like
+// the factory set (-4 dBFS peak for a 4-note chord, -7 dBFS for a mono note).
+static int exportPacks (const juce::File& dir)
+{
+    auto pPtr = std::make_unique<ChurchSynthProcessor>();
+    auto& p = *pPtr;
+    int failures = 0;
+    for (const auto& pack : presetPacks())
+    {
+        const auto folder = dir.getChildFile (pack.folder);
+        folder.deleteRecursively();
+        folder.createDirectory();
+        for (const auto& fp : pack.presets())
+        {
+            PresetBuilder b;
+            fp.build (b);
+            const auto tree = b.build (fp.name, fp.category);
+            for (const auto& e : b.errors)
+            {
+                std::printf ("FAIL: %s: %s\n", fp.name, e.toRawUTF8());
+                ++failures;
+            }
+            const int wantRoutes = tree.getChildWithName ("ROUTES").getNumChildren();
+            auto measure = [&] (float vol) {
+                p.restoreStateTree (tree, ChurchSynthProcessor::LoadKind::Preset);
+                p.apvts.getParameter ("master_vol")->setValueNotifyingHost (vol);
+                p.syncEffects();
+                p.prepareToPlay (48000.0, 512);
+                const bool mono = p.apvts.getRawParameterValue ("voicing")->load() < 2.0f;
+                const bool bass = juce::String (fp.category) == "Bass";
+                bool finite = true;
+                const float pk = mono ? playPeak (p, { bass ? 36 : 60 }, &finite) : playPeak (p, { 48, 60, 64, 67 }, &finite);
+                if (! finite)
+                {
+                    std::printf ("FAIL: %s is not finite\n", fp.name);
+                    ++failures;
+                }
+                return std::make_pair (pk, mono);
+            };
+            // Well below the limiter; three runs (random phases, free-running modulators) and keep the loudest.
+            auto [quiet, mono] = measure (0.2f);
+            for (int run = 0; run < 2; ++run)
+                quiet = std::max (quiet, measure (0.2f).first);
+            const double truePeakDb = 20.0 * std::log10 (quiet / 0.2 + 1.0e-9);
+            const double target = mono ? -7.0 : -4.0;
+            const float vol = (float) juce::jlimit (0.05, 1.0, std::pow (10.0, (target - truePeakDb) / 20.0));
+            const float finalPeak = measure (std::round (vol * 100.0f) / 100.0f).first;
+            if (p.getRoutes().count != wantRoutes)
+            {
+                std::printf ("FAIL: %s lost routes (%d of %d)\n", fp.name, p.getRoutes().count, wantRoutes);
+                ++failures;
+            }
+            if (finalPeak > 1.0f || finalPeak < 0.05f)
+            {
+                std::printf ("FAIL: %s level %.1f dBFS\n", fp.name, 20.0 * std::log10 (finalPeak + 1.0e-9));
+                ++failures;
+            }
+            // Write the sound as loaded (fresh state, no MIDI map) with the matched volume.
+            p.restoreStateTree (tree, ChurchSynthProcessor::LoadKind::Preset);
+            p.apvts.getParameter ("master_vol")->setValueNotifyingHost (std::round (vol * 100.0f) / 100.0f);
+            const auto file = folder.getChildFile (PresetManager::safeFileName (fp.name) + PresetManager::kExtension);
+            if (! p.presets().writePresetFile (file, fp.name, fp.category, "Church Synth", fp.description))
+            {
+                std::printf ("FAIL: couldn't write %s\n", file.getFullPathName().toRawUTF8());
+                ++failures;
+            }
+            std::printf ("%-24s %-14s %s  vol %.2f  peak %6.1f dBFS\n", fp.name, fp.category, mono ? "mono" : "poly",
+                         std::round (vol * 100.0f) / 100.0f, 20.0 * std::log10 (finalPeak + 1.0e-9));
+        }
+    }
+    // Read back: every file parses and restores with its routes.
+    for (const auto& f : dir.findChildFiles (juce::File::findFiles, true, "*.csp"))
+    {
+        PresetInfo info;
+        info.factory = false;
+        info.file = f;
+        const auto t = p.presets().treeFor (info);
+        if (! t.isValid())
+        {
+            std::printf ("FAIL: %s doesn't read back\n", f.getFileName().toRawUTF8());
+            ++failures;
+        }
+    }
+    std::printf (failures == 0 ? "Pack export OK.\n" : "Pack export FAILED (%d).\n", failures);
+    return failures == 0 ? 0 : 1;
+}
+
+// --render-pack <exported dir> <wav dir>: one WAV per exported pack preset, with a
+// phrase that suits it (chords for keys/pads, a melody for bells and leads, a held
+// note for bass sequences). For the audition reel.
+static int renderPack (const juce::File& packDir, const juce::File& wavDir)
+{
+    auto pPtr = std::make_unique<ChurchSynthProcessor>();
+    auto& p = *pPtr;
+    wavDir.createDirectory();
+    int index = 0;
+    for (const auto& pack : presetPacks())
+        for (const auto& fp : pack.presets())
+        {
+            PresetInfo info;
+            info.factory = false;
+            info.name = fp.name;
+            info.category = fp.category;
+            info.file = packDir.getChildFile (pack.folder).getChildFile (PresetManager::safeFileName (fp.name) + PresetManager::kExtension);
+            if (! p.presets().load (info))
+            {
+                std::printf ("FAIL: can't load %s\n", info.file.getFullPathName().toRawUTF8());
+                return 1;
+            }
+            p.syncEffects();
+            p.prepareToPlay (48000.0, 512);
+            const juce::String cat (fp.category);
+            const bool seq = p.apvts.getRawParameterValue ("seq_on")->load() >= 0.5f;
+            const bool mono = p.apvts.getRawParameterValue ("voicing")->load() < 2.0f;
+            struct Ev { double on, off; int note; int vel; };
+            std::vector<Ev> evs;
+            auto chord = [&] (double on, double off, std::initializer_list<int> notes, int vel) {
+                for (int n : notes) evs.push_back ({ on, off, n, vel });
+            };
+            double len = 8.0;
+            if (seq && cat == "Bass")
+            {
+                evs.push_back ({ 0.05, 3.0, 36, 100 });
+                evs.push_back ({ 3.0, 4.5, 33, 100 });
+                evs.push_back ({ 4.5, 6.0, 29, 100 });
+                len = 7.0;
+            }
+            else if (seq)
+            {
+                chord (0.05, 3.0, { 48, 55, 60, 64 }, 100);
+                chord (3.0, 6.0, { 45, 52, 57, 60 }, 100);
+                len = 8.0;
+            }
+            else if (mono)
+            {
+                const int base = cat == "Bass" ? 36 : 60;
+                const int mel[8] = { 0, 4, 7, 9, 7, 4, 2, 0 };
+                for (int k = 0; k < 8; ++k)
+                    evs.push_back ({ 0.05 + k * 0.4, 0.05 + k * 0.4 + (k == 7 ? 1.4 : 0.45), base + mel[k], 90 + (k % 2) * 20 });
+                len = 6.0;
+            }
+            else if (cat == "Pluck")
+            {
+                const int mel[6] = { 76, 74, 72, 67, 72, 79 };
+                for (int k = 0; k < 6; ++k)
+                    evs.push_back ({ 0.05 + k * 0.45, 0.4 + k * 0.45, mel[k], 80 + (k % 3) * 15 });
+                chord (2.9, 4.4, { 60, 64, 67, 72 }, 100);
+                len = 8.0;
+            }
+            else
+            {
+                const bool slow = cat == "Pad" || cat == "Strings/Brass";
+                const double d = slow ? 2.4 : 1.4;
+                chord (0.05, 0.05 + d, { 48, 60, 64, 67 }, 100);
+                chord (0.05 + d, 0.05 + 2 * d, { 45, 57, 60, 64 }, 85);
+                chord (0.05 + 2 * d, 0.05 + 3 * d, { 41, 57, 60, 65 }, 110);
+                len = 3 * d + (slow ? 3.0 : 2.5);
+            }
+            juce::AudioBuffer<float> out (2, (int) (48000.0 * len) / 512 * 512);
+            juce::AudioBuffer<float> buf (2, 512);
+            for (int pos = 0; pos + 512 <= out.getNumSamples(); pos += 512)
+            {
+                juce::MidiBuffer midi;
+                const double t0 = pos / 48000.0, t1 = (pos + 512) / 48000.0;
+                for (const auto& e : evs)
+                {
+                    if (e.off >= t0 && e.off < t1)
+                        midi.addEvent (juce::MidiMessage::noteOff (1, e.note), juce::jlimit (0, 511, (int) ((e.off - t0) * 48000.0)));
+                    if (e.on >= t0 && e.on < t1)
+                        midi.addEvent (juce::MidiMessage::noteOn (1, e.note, (juce::uint8) e.vel), juce::jlimit (0, 511, (int) ((e.on - t0) * 48000.0)));
+                }
+                buf.clear();
+                p.processBlock (buf, midi);
+                for (int ch = 0; ch < 2; ++ch)
+                    out.copyFrom (ch, pos, buf, ch, 0, 512);
+            }
+            out.applyGainRamp (out.getNumSamples() - 14400, 14400, 1.0f, 0.0f);
+            const auto f = wavDir.getChildFile (juce::String (++index).paddedLeft ('0', 2) + " " + fp.name + ".wav");
+            f.deleteFile();
+            if (auto os = std::unique_ptr<juce::OutputStream> (f.createOutputStream()))
+            {
+                juce::WavAudioFormat wav;
+                JUCE_BEGIN_IGNORE_DEPRECATION_WARNINGS
+                auto w = std::unique_ptr<juce::AudioFormatWriter> (wav.createWriterFor (os.get(), 48000.0, 2, 24, {}, 0));
+                JUCE_END_IGNORE_DEPRECATION_WARNINGS
+                if (w != nullptr)
+                {
+                    os.release();
+                    w->writeFromAudioSampleBuffer (out, 0, out.getNumSamples());
+                }
+            }
+        }
+    return 0;
+}
+
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI init;
     int failures = 0;
+
+    if (argc > 3 && juce::String (argv[1]) == "--render-pack")
+        return renderPack (juce::File (argv[2]), juce::File (argv[3]));
+    if (argc > 2 && juce::String (argv[1]) == "--export-pack")
+        return exportPacks (juce::File (argv[2]));
+
+    // Every factory and pack preset uses only known parameters, menu items and routes.
+    {
+        auto check = [&] (const std::vector<FactoryPreset>& list) {
+            for (const auto& fp : list)
+            {
+                PresetBuilder b;
+                fp.build (b);
+                for (const auto& e : b.errors)
+                {
+                    std::printf ("FAIL: preset %s: %s\n", fp.name, e.toRawUTF8());
+                    ++failures;
+                }
+            }
+        };
+        check (factoryPresets());
+        for (const auto& pack : presetPacks())
+            check (pack.presets());
+    }
 
     if (argc > 1 && juce::String (argv[1]) == "--dump-params")
     {

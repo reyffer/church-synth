@@ -25,7 +25,8 @@ PresetBuilder::PresetBuilder() : params ("ChurchSynth")
 juce::ValueTree PresetBuilder::param (const juce::String& id)
 {
     auto p = params.getChildWithProperty ("id", id);
-    jassert (p.isValid()); // unknown parameter ID in a factory preset
+    if (! p.isValid())
+        errors.add ("unknown parameter " + id);
     return p;
 }
 
@@ -57,7 +58,8 @@ PresetBuilder& PresetBuilder::choice (const juce::String& id, const juce::String
                 for (int i = 0; i < d.choices.size(); ++i)
                     if (d.choices[i].fromFirstOccurrenceOf (": ", false, false).equalsIgnoreCase (itemName))
                         idx = i;
-            jassert (idx >= 0); // unknown menu item in a factory preset
+            if (idx < 0)
+                errors.add ("unknown item '" + itemName + "' for " + id);
             if (idx >= 0)
                 set (id, (float) idx);
             break;
@@ -68,7 +70,9 @@ PresetBuilder& PresetBuilder::choice (const juce::String& id, const juce::String
 PresetBuilder& PresetBuilder::route (const juce::String& source, const juce::String& destId, float amount,
                                      const juce::String& sidechain, float scAmount)
 {
-    jassert (cs::findModSource (source.toStdString()) >= 0 && cs::findModDest (destId.toStdString()) >= 0);
+    if (cs::findModSource (source.toStdString()) < 0 || cs::findModDest (destId.toStdString()) < 0
+        || (sidechain.isNotEmpty() && cs::findModSource (sidechain.toStdString()) < 0))
+        errors.add ("bad route " + source + " > " + destId + (sidechain.isNotEmpty() ? " (sc " + sidechain + ")" : juce::String()));
     juce::ValueTree e ("ROUTE");
     e.setProperty ("src", source, nullptr);
     e.setProperty ("dest", destId, nullptr);
@@ -254,6 +258,20 @@ bool PresetManager::save (const juce::String& name, const juce::String& category
         error = "Couldn't create " + folder.getFullPathName();
         return false;
     }
+    const auto file = folder.getChildFile (safeFileName (name) + kExtension);
+    if (! writePresetFile (file, name, category, author, description))
+    {
+        error = "Couldn't write " + file.getFullPathName();
+        return false;
+    }
+    proc.setPresetInfo (name.trim(), category, false);
+    rescan();
+    return true;
+}
+
+bool PresetManager::writePresetFile (const juce::File& file, const juce::String& name, const juce::String& category,
+                                     const juce::String& author, const juce::String& description)
+{
     juce::XmlElement root ("ChurchSynthPreset");
     root.setAttribute ("format", kPresetFormat);
     root.setAttribute ("name", name.trim());
@@ -263,15 +281,7 @@ bool PresetManager::save (const juce::String& name, const juce::String& category
     root.setAttribute ("version", JucePlugin_VersionString);
     if (auto inner = currentAsPresetTree (name.trim(), category, author, description).createXml())
         root.addChildElement (inner.release());
-    const auto file = folder.getChildFile (safeFileName (name) + kExtension);
-    if (! root.writeTo (file))
-    {
-        error = "Couldn't write " + file.getFullPathName();
-        return false;
-    }
-    proc.setPresetInfo (name.trim(), category, false);
-    rescan();
-    return true;
+    return root.writeTo (file);
 }
 
 bool PresetManager::remove (const PresetInfo& p)

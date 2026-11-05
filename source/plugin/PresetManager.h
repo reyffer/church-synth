@@ -45,6 +45,10 @@ public:
     bool save (const juce::String& name, const juce::String& category, const juce::String& author,
                const juce::String& description, juce::String& error);
     bool remove (const PresetInfo& p);
+    // Writes the current sound to a .csp file (used by save and by the preset-pack exporter).
+    static juce::String safeFileName (const juce::String& name);
+    bool writePresetFile (const juce::File& file, const juce::String& name, const juce::String& category,
+                          const juce::String& author, const juce::String& description);
     juce::ValueTree treeFor (const PresetInfo& p); // the preset's state tree (empty if unreadable)
     int indexOfCurrent();                          // in all(), or -1
     PresetInfo currentInfo();
@@ -90,7 +94,6 @@ private:
 
     void loadFavourites();
     void saveFavourites() const;
-    static juce::String safeFileName (const juce::String& name);
 };
 
 // --- Factory content built in code -------------------------------------------------
@@ -109,6 +112,7 @@ public:
     PresetBuilder& pattern (const cs::SeqPattern& p);
     PresetBuilder& macroName (int m, const juce::String& name);
     juce::ValueTree build (const juce::String& name, const juce::String& category) const;
+    juce::StringArray errors; // unknown IDs, menu items or routes (checked by the state test)
 
 private:
     juce::ValueTree params; // PARAM children by id
