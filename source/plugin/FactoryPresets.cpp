@@ -6,6 +6,8 @@
 
 #include "PresetHelpers.h"
 
+#include <map>
+
 using namespace cs;
 using namespace cs::fx;
 
@@ -752,4 +754,56 @@ const std::vector<FactoryFxPreset>& factoryFxPresets()
         { FxDistortion, "Warm Drive", { { 0, 0.15f }, { 1, 0.3f }, { 10, 0.6f } } },
     };
     return list;
+}
+
+// Default tags for the factory presets (the user can edit, rename and delete tags;
+// their edits live in "Preset Tags.xml").
+juce::StringArray factoryPresetTags (const juce::String& presetName)
+{
+    static const std::map<juce::String, const char*> tags {
+        { "Sanctuary Pad", "Pad, Polysynth, Worship" },
+        { "Warm Bed", "Pad, Ambient, Worship" },
+        { "Glass Cathedral", "Pad, Ambient, Evolving" },
+        { "Choir Air", "Pad, Choir" },
+        { "Strings Pad", "Pad, Strings" },
+        { "Shimmer Swell", "Pad, Swell, Ambient" },
+        { "Evolving Light", "Pad, Evolving" },
+        { "Soft Organ Pad", "Organ, Pad" },
+        { "Ambient Fifths", "Pad, Ambient" },
+        { "Dark Drone", "Pad, Cinematic" },
+        { "Electric Tines", "Electric Piano" },
+        { "Soft Keys", "Synth Keys, Worship" },
+        { "Stage Keys", "Synth Keys" },
+        { "Gospel Organ", "Organ" },
+        { "Pipe Organ", "Organ, Pipe Organ" },
+        { "Glass Keys", "Bells, Synth Keys" },
+        { "Worship Pluck", "Pluck, Worship" },
+        { "Bell Pluck", "Bells, Pluck" },
+        { "Soft Mallet", "Mallet" },
+        { "Thumb Piano", "Mallet" },
+        { "Ambient Pluck", "Pluck, Ambient" },
+        { "Soft Lead", "Lead, Mono" },
+        { "Saw Lead", "Lead" },
+        { "Breath Flute", "Lead, Woodwind" },
+        { "Sync Lead", "Lead" },
+        { "Sub Bass", "Bass, Sub" },
+        { "Warm Bass", "Bass" },
+        { "Pluck Bass", "Bass, Pluck" },
+        { "Drone Bass", "Bass, Cinematic" },
+        { "Synth Strings", "Strings, String Machine" },
+        { "Soft Brass", "Brass, Polysynth" },
+        { "Cello Swell", "Strings, Mono" },
+        { "Rain Texture", "Texture, Ambient" },
+        { "Ocean Swell", "Texture, Ambient" },
+        { "Vinyl Air", "Texture, Lo-Fi" },
+        { "Pulse Arp", "Arp" },
+        { "Eighth Note Gate", "Pulsing, Pad" },
+        { "Ambient Arp", "Arp, Ambient" },
+        { "Generative Bells", "Bells, Evolving" },
+        { "Rhythmic Pad 16ths", "Pulsing, Pad" },
+        { "Riser", "Swell, Transition" },
+        { "Transition Swell", "Swell, Transition" },
+    };
+    const auto it = tags.find (presetName);
+    return it == tags.end() ? juce::StringArray() : PresetManager::parseTags (it->second);
 }

@@ -24,6 +24,23 @@ inline float softClip (float x) noexcept
     return x * (27.0f + x2) / (27.0f + 9.0f * x2);
 }
 
+// Saturator with automatic makeup: the output follows the input's loudness (30 ms
+// RMS followers) times `boost`, so the character changes with drive but the level
+// doesn't depend on how hot the signal arrives. Stereo; bias adds even harmonics.
+struct AutoGainSaturator
+{
+    float inEnv[2] {}, outEnv[2] {}, coef = 0.0007f;
+    void setSampleRate (float sr) noexcept { coef = 1.0f - std::exp (-1.0f / (0.03f * sr)); }
+    void reset() noexcept { inEnv[0] = inEnv[1] = outEnv[0] = outEnv[1] = 0.0f; }
+    float process (int ch, float x, float gain, float bias, float boost) noexcept
+    {
+        const float y = softClip (x * gain + bias) - softClip (bias);
+        inEnv[ch] += (x * x - inEnv[ch]) * coef;
+        outEnv[ch] += (y * y - outEnv[ch]) * coef;
+        return y * boost * std::sqrt ((inEnv[ch] + 1.0e-12f) / (outEnv[ch] + 1.0e-12f));
+    }
+};
+
 // Simple, fast per-voice random generator.
 struct Rng
 {

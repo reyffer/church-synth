@@ -21,6 +21,7 @@ enum FxType : int
     FxMultiFilter, FxParamEq,
     FxDistortion, FxBitcrusher, FxErode,
     FxSuperUnison, FxChorus, FxVintageChorus, FxFlanger, FxVintageFlanger, FxPhaser, FxPanner,
+    FxRotary, // appended in feedback round 2
     FxTypeCount
 };
 

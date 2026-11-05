@@ -652,7 +652,7 @@ void FlatButton::paint (juce::Graphics& g)
     {
         g.setColour (c);
         g.setFont (font (fontSize, true));
-        g.drawFittedText (text, r.toNearestInt().reduced (3, 0), juce::Justification::centred, 1, 0.7f);
+        g.drawFittedText (text, r.toNearestInt().reduced (3, 0), justification, 1, 0.7f);
     }
 }
 } // namespace ui

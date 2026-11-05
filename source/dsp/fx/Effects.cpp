@@ -54,6 +54,8 @@ const FxInfo kFxInfo[FxTypeCount] = {
       D { 0.5f, 0.5f, 0.0f, 0.5f, 0.3f, 0.4f, 0.5f, 0.5f }, true },
     { "Panner", "Modulation", P { "Amount", "Rate", "Invert", "Mono Bass", "Bass Cutoff", "Natural Law", "Shape" },
       D { 0.5f, 0.3f, 0.0f, 0.0f, 0.3f, 1.0f, 0.0f }, true },
+    { "Rotary", "Modulation", P { "Speed", "Slow Rate", "Fast Rate", "Ramp", "Horn/Drum", "Drive", "Spread", "Dry/Wet", "Brake" },
+      D { 0.0f, 0.5f, 0.6f, 0.5f, 0.5f, 0.2f, 0.8f, 1.0f, 0.0f }, false },
 };
 
 // Linear dry/wet: for effects whose wet signal is a processed copy of the dry one.
@@ -974,9 +976,11 @@ public:
     }
     void process (float* l, float* r, int n, const float* p, bool, const FxContext&) noexcept override
     {
-        static constexpr float kRate[3] = { 0.5f, 0.83f, 8.0f };
-        static constexpr float kDepthMs[3] = { 1.8f, 2.0f, 0.35f };
-        static constexpr float kBaseMs[3] = { 3.3f, 3.3f, 2.0f };
+        // Mode I: slow and gentle; II: faster and much deeper (about 4x the pitch
+        // movement of I); I + II: fast, shallow shimmer. Rate and Depth scale these.
+        static constexpr float kRate[3] = { 0.5f, 0.83f, 9.75f };
+        static constexpr float kDepthMs[3] = { 1.1f, 2.4f, 0.15f };
+        static constexpr float kBaseMs[3] = { 3.5f, 3.5f, 2.5f };
         const int mode = choice (p[0], 3);
         const float hz = kRate[mode] * expMap (p[1], 0.5f, 2.0f);
         const float depth = kDepthMs[mode] * 0.001f * sampleRate * (0.3f + 1.4f * p[2]);
@@ -1151,6 +1155,89 @@ private:
     Rng rng;
 };
 
+
+// ===========================================================================
+// Rotary speaker: a tube-ish preamp, an 800 Hz crossover, a rotating horn (highs)
+// and drum (lows). Each rotor is a Doppler delay plus amplitude modulation,
+// picked up by two "mics" (Spread = angle between them). Speed: Slow / Fast,
+// Brake stops it; the horn changes speed quickly, the heavier drum slowly (Ramp scales both).
+class RotaryFx final : public Effect
+{
+public:
+    void prepare (float sr) override
+    {
+        sampleRate = sr;
+        for (auto& d : line)
+            d.prepare ((int) (0.006f * sr) + 8);
+        xover.set (filt::prewarp (800.0f, sr));
+        xover2.set (filt::prewarp (800.0f, sr));
+        cab.set (filt::prewarp (7000.0f, sr));
+        reset();
+    }
+    void reset() override
+    {
+        for (auto& d : line)
+            d.clear();
+        xover.reset(); xover2.reset(); cab.reset();
+        hornHz = drumHz = -1.0f;
+    }
+    void process (float* l, float* r, int n, const float* p, bool, const FxContext&) noexcept override
+    {
+        // Speed is a switch (>= 0.5 = fast) so a mod wheel or a CC can flip it; Brake stops the rotors.
+        const int speed = flag (p[8]) ? 2 : (flag (p[0]) ? 1 : 0); // 0 slow, 1 fast, 2 stopped
+        const float slowHorn = expMap (p[1], 0.3f, 1.6f), fastHorn = expMap (p[2], 4.0f, 8.5f);
+        const float targetHorn = speed == 0 ? slowHorn : speed == 1 ? fastHorn : 0.0f;
+        const float targetDrum = speed == 0 ? slowHorn * 0.85f : speed == 1 ? fastHorn * 0.87f : 0.0f;
+        if (hornHz < 0.0f) // first block: start at speed
+        {
+            hornHz = targetHorn;
+            drumHz = targetDrum;
+        }
+        const float ramp = expMap (p[3], 0.3f, 4.0f);
+        const float dt = (float) n / sampleRate;
+        hornHz += (targetHorn - hornHz) * (1.0f - std::exp (-dt / (0.3f * ramp)));
+        drumHz += (targetDrum - drumHz) * (1.0f - std::exp (-dt / (1.3f * ramp)));
+        const float hornLevel = std::min (1.0f, 2.0f * p[4]), drumLevel = std::min (1.0f, 2.0f * (1.0f - p[4]));
+        const float drive = p[5];
+        const float g = 1.0f + 9.0f * drive * drive;
+        const float makeup = 1.0f / softClip (0.5f * g) * 0.5f;
+        const float micOffset = 0.5f * std::clamp (p[6], 0.0f, 1.0f); // up to half a turn apart
+        const float mix = p[7];
+        const float base = 0.0012f * sampleRate, hornDepth = 0.00045f * sampleRate, drumDepth = 0.00025f * sampleRate;
+        const float hornInc = hornHz / sampleRate, drumInc = drumHz / sampleRate;
+        auto& sine = SineTable::get();
+        for (int i = 0; i < n; ++i)
+        {
+            float x = 0.5f * (l[i] + r[i]);
+            if (drive > 0.0f)
+                x = (softClip (x * g + 0.1f * drive) - softClip (0.1f * drive)) * makeup;
+            const float lo = xover2.lp (0, xover.lp (0, x));
+            const float hi = x - lo;
+            line[0].push (hi);
+            line[1].push (lo);
+            hornPh += hornInc; hornPh -= std::floor (hornPh);
+            drumPh += drumInc; drumPh -= std::floor (drumPh);
+            float out[2];
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                const float off = ch == 0 ? 0.0f : micOffset;
+                const float hs = sine (wrap01 (hornPh + off)), hc = sine (wrap01 (hornPh + off + 0.25f));
+                const float ds = sine (wrap01 (drumPh + off)), dc = sine (wrap01 (drumPh + off + 0.25f));
+                const float horn = line[0].read (base + hornDepth * hs) * (1.0f - 0.55f * (0.5f - 0.5f * hc));
+                const float drum = line[1].read (base + drumDepth * ds) * (1.0f - 0.3f * (0.5f - 0.5f * dc));
+                out[ch] = cab.lp (ch, 1.25f * (hornLevel * horn + drumLevel * drum));
+            }
+            l[i] = mixEP (l[i], out[0], mix);
+            r[i] = mixEP (r[i], out[1], mix);
+        }
+    }
+
+private:
+    float sampleRate = 48000.0f, hornHz = -1.0f, drumHz = -1.0f, hornPh = 0.0f, drumPh = 0.3f;
+    Delay line[2];
+    filt::OnePole xover, xover2, cab;
+};
+
 // ===========================================================================
 class PannerFx final : public Effect
 {
@@ -1229,6 +1316,7 @@ std::unique_ptr<Effect> makeEffect (int type, float sampleRate)
         case FxVintageFlanger: e = std::make_unique<FlangerFx> (true); break;
         case FxPhaser: e = std::make_unique<PhaserFx>(); break;
         case FxPanner: e = std::make_unique<PannerFx>(); break;
+        case FxRotary: e = std::make_unique<RotaryFx>(); break;
         default: return nullptr;
     }
     e->type = type;

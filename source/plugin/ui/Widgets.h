@@ -177,6 +177,7 @@ public:
     bool lit = false, outline = true;
     juce::Colour litColour = col::accent;
     float fontSize = 12.0f;
+    juce::Justification justification = juce::Justification::centred;
     std::function<void()> onClick;
     std::function<void (juce::Graphics&, juce::Rectangle<float>, juce::Colour)> icon;
 

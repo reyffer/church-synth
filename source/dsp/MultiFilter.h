@@ -106,11 +106,13 @@ public:
     {
         sampleRate = sr;
         classic.setSampleRate (sr);
+        postSat.setSampleRate (sr);
     }
 
     void reset() noexcept
     {
         classic.reset();
+        postSat.reset();
         for (auto& s : svf) s.reset();
         for (auto& o : op) o.reset();
         for (auto& row : lad) for (auto& v : row) v = 0.0f;
@@ -136,6 +138,10 @@ public:
         fmDepth = std::clamp (p.fm, 0.0f, 1.0f) * 4.0f;
         cutoff = std::clamp (cutoffHz, 16.0f, 0.47f * sampleRate);
         driveGain = 1.0f + drive * drive * 8.0f;
+        // Analog models: drive also saturates after the filter (grit above the cutoff),
+        // with partial makeup so full drive is a few dB louder.
+        postGain = 1.0f + 10.0f * drive;
+        postBoost = 1.0f + 0.4f * drive;
 
         if (type == FilterLpg)
         {
@@ -187,20 +193,32 @@ public:
             case FilterComb: combProcess (l, r); return;
             case FilterDrive: l = driveFilter (0, l); r = driveFilter (1, r); return;
             case FilterAllpass: l = allpassChain (0, l, fbL); r = allpassChain (1, r, fbR); return;
-            case FilterLadder: l = ladder (0, l, false); r = ladder (1, r, false); return;
-            case FilterSallenKey: l = sallenKey (0, l); r = sallenKey (1, r); return;
+            case FilterLadder: l = ladder (0, l, false); r = ladder (1, r, false); postDrive (l, r); return;
+            case FilterSallenKey: l = sallenKey (0, l); r = sallenKey (1, r); postDrive (l, r); return;
             case FilterOta:
                 if (sub == 1) { l = otaTwoPole (0, l); r = otaTwoPole (1, r); }
                 else { l = ladder (0, l, true); r = ladder (1, r, true); }
+                postDrive (l, r);
                 return;
-            case FilterSvfMorph: l = svfMorph (0, l); r = svfMorph (1, r); return;
-            case FilterMultimode: l = multimode (0, l); r = multimode (1, r); return;
+            case FilterSvfMorph: l = svfMorph (0, l); r = svfMorph (1, r); postDrive (l, r); return;
+            case FilterMultimode: l = multimode (0, l); r = multimode (1, r); postDrive (l, r); return;
             case FilterLpg: lpg (l, r); return;
             default: return;
         }
     }
 
 private:
+    float postGain = 1.0f, postBoost = 1.0f;
+    AutoGainSaturator postSat;
+    void postDrive (float& l, float& r) noexcept
+    {
+        if (drive <= 0.0f)
+            return;
+        const float w = std::min (1.0f, drive * 8.0f);
+        l += w * (postSat.process (0, l, postGain, 0.0f, postBoost) - l);
+        r += w * (postSat.process (1, r, postGain, 0.0f, postBoost) - r);
+    }
+
     float sampleRate = 48000.0f;
     int type = FilterClassicType, sub = 0;
     float reso = 0, drive = 0, a = 0.5f, b = 0.5f, c = 0.5f, fmDepth = 0, cutoff = 1000, driveGain = 1;

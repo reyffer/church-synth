@@ -101,6 +101,7 @@ TopBar::TopBar (UiContext& uc) : ctx (uc), seqPower (uc, "seq_on", Toggle::Power
     fxBtn.onClick = [this] { if (onPage) onPage (Page::Fx); };
     seqBtn.onClick = [this] { if (onPage) onPage (Page::Seq); };
     seqPower.setTooltip ("Seq/Arp on/off");
+    fxBtn.justification = seqBtn.justification = juce::Justification::centredLeft; // hug their power switches
     fxPower.setTooltip ("FX section on/off");
     master.setTooltip ("Master volume");
     master.setLabel ({});
@@ -143,14 +144,15 @@ void TopBar::resized()
     meterArea = right.removeFromRight (8).reduced (0, 8);
     right.removeFromRight (4);
     master.setBounds (right.removeFromRight (40).reduced (2, 4));
-    right.removeFromRight (20);
-    seqBtn.setBounds (right.removeFromRight (56).reduced (2, 9));
-    seqPower.setBounds (right.removeFromRight (20).reduced (2, 12));
-    right.removeFromRight (8);
-    fxBtn.setBounds (right.removeFromRight (50).reduced (2, 9));
-    fxPower.setBounds (right.removeFromRight (20).reduced (2, 12));
-    right.removeFromRight (6);
-    synthBtn.setBounds (right.removeFromRight (70).reduced (2, 9));
+    // Page tabs; each power switch sits right against its own label: SYNTH   (|)FX   (|)SEQ
+    right.removeFromRight (16);
+    seqBtn.setBounds (right.removeFromRight (40).reduced (0, 9));
+    seqPower.setBounds (right.removeFromRight (18).reduced (1, 12));
+    right.removeFromRight (18);
+    fxBtn.setBounds (right.removeFromRight (30).reduced (0, 9));
+    fxPower.setBounds (right.removeFromRight (18).reduced (1, 12));
+    right.removeFromRight (18);
+    synthBtn.setBounds (right.removeFromRight (56).reduced (0, 9));
 }
 
 void TopBar::tickMeter()
@@ -176,22 +178,32 @@ void TopBar::paint (juce::Graphics& g)
     g.setColour (col::border);
     g.drawHorizontalLine (getHeight() - 1, 0.0f, (float) getWidth());
 
-    // Logo: the church lotus (light grey), then the CHURCH SYNTH wordmark.
+    // Logo: the church lotus (light grey), then CHURCH and SYNTH, evenly spaced
+    // (same gap between the three, measured from the actual glyph widths).
     {
+        constexpr float gap = 9.0f, x0 = 48.0f, lh = 24.0f;
+        float x = x0;
         const juce::Image lotus = juce::ImageCache::getFromMemory (BinaryData::lotus_png, BinaryData::lotus_pngSize);
         if (lotus.isValid())
         {
-            const float lh = 24.0f, lw = lh * (float) lotus.getWidth() / (float) lotus.getHeight();
+            const float lw = lh * (float) lotus.getWidth() / (float) lotus.getHeight();
             g.setColour (col::text.withAlpha (0.85f));
-            g.drawImage (lotus, { 48.0f, ((float) getHeight() - lh) * 0.5f, lw, lh }, juce::RectanglePlacement::centred, true);
+            g.drawImage (lotus, { x, ((float) getHeight() - lh) * 0.5f, lw, lh }, juce::RectanglePlacement::centred, true);
+            x += lw + gap;
         }
+        auto word = [&] (const juce::String& t, const juce::Font& f, juce::Colour c) {
+            juce::GlyphArrangement ga;
+            ga.addLineOfText (f, t, 0.0f, 0.0f);
+            const auto bb = ga.getBoundingBox (0, -1, true); // ink bounds, so spacing follows the letters
+            g.setColour (c);
+            const float baseline = (float) getHeight() * 0.5f + f.getAscent() * 0.36f;
+            ga.moveRangeOfGlyphs (0, -1, x - bb.getX(), baseline);
+            ga.draw (g);
+            x += bb.getWidth() + gap;
+        };
+        word ("CHURCH", font (20.0f, true), col::gold);
+        word ("SYNTH", font (20.0f, false), col::text);
     }
-    g.setColour (col::gold);
-    g.setFont (font (20.0f, true));
-    g.drawText ("CHURCH", 82, 0, 100, getHeight(), juce::Justification::centredLeft);
-    g.setColour (col::text);
-    g.setFont (font (20.0f, false));
-    g.drawText ("SYNTH", 169, 0, 90, getHeight(), juce::Justification::centredLeft);
 
     // Preset bar
     auto bar = juce::Rectangle<float> (440.0f, 7.0f, 400.0f, 30.0f);

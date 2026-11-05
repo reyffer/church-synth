@@ -87,6 +87,60 @@ int weightedPitch (const std::array<float, 12>& w, float u) noexcept
 }
 } // namespace
 
+void seqGenerate (SeqPattern& pat, const SeqParams& p, uint32_t seed, const SeqGenerateSettings& g) noexcept
+{
+    const auto& w = scaleWeights (pat, p.scale);
+    const int range = std::clamp (g.range, 0, 12);
+    int prevPitch = 0;
+    for (int c = 0; c < kSeqSteps; ++c)
+    {
+        auto& st = pat.steps[(size_t) c];
+        if (st.lockSeed != 0)
+        {
+            prevPitch = st.pitch;
+            continue;
+        }
+        auto u = [&] (int which) { return hashUni (seed, c, 7, which); };
+        // Rhythm: the first step always plays; beats are likelier than 8ths, 8ths than 16ths.
+        const float chance = c == 0 ? 1.0f : (c % 4 == 0 ? g.density + 0.25f : (c % 2 == 0 ? g.density : g.density - 0.2f));
+        st.on = u (0) < chance;
+        st.prob = 1.0f;
+        // Pitch: weighted by the scale, the root and fifth a little likelier, and small
+        // steps from the previous note likelier than leaps (sounds like a line, not noise).
+        if (c == 0)
+            st.pitch = 0;
+        else
+        {
+            float best = -1.0f;
+            int pick = 0;
+            for (int s = 0; s <= range; ++s)
+            {
+                float wt = std::max (0.0f, w[(size_t) (s % 12)]);
+                if (wt <= 0.0f)
+                    continue;
+                if (s == 0 || s == 7 || s == 12)
+                    wt *= 1.5f;
+                const int leap = std::abs (s - prevPitch);
+                wt *= leap <= 2 ? 2.0f : (leap <= 5 ? 1.3f : 0.7f);
+                // weighted random choice: largest u^(1/w)
+                const float score = std::pow (std::max (1.0e-6f, hashUni (seed, c, 8, s)), 1.0f / wt);
+                if (score > best)
+                {
+                    best = score;
+                    pick = s;
+                }
+            }
+            st.pitch = pick;
+        }
+        if (st.on)
+            prevPitch = st.pitch;
+        st.octave = u (1) < g.octaves ? (u (2) < 0.7f ? 1 : -1) : 0;
+        st.velocity = c % 4 == 0 ? 0.95f + 0.05f * u (3) : (c % 2 == 0 ? 0.72f + 0.12f * u (3) : 0.55f + 0.15f * u (3));
+        st.gate = u (4) < 0.15f * (1.0f - g.density) ? 1.0f + u (5) : 0.35f + 0.45f * u (5);
+        st.slide = u (6) < g.slides ? 0.3f : 0.0f;
+    }
+}
+
 uint32_t seqNextSeed (uint32_t seed) noexcept
 {
     const uint32_t s = mix32 (seed + 0x6D2B79F5u);

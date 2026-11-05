@@ -25,6 +25,14 @@ PresetBrowser::PresetBrowser (UiContext& c) : ctx (c)
     saveAsBtn.text = "Save As...";
     del.text = "Delete";
     favBtn.text = "Favourite";
+    rescanBtn.text = "Rescan";
+    rescanBtn.setTooltip ("Re-read the Presets folder (after copying preset files into it)");
+    rescanBtn.onClick = [this] {
+        ctx.proc.presets().rescan();
+        refresh();
+    };
+    tagsBtn.text = "Edit Tags...";
+    tagsBtn.onClick = [this] { showTagMenu (ctx.proc.presets().currentInfo(), &tagsBtn); };
     close.onClick = [this] { if (onClose) onClose(); };
     init.onClick = [this] { ctx.proc.presets().loadInit(); refresh(); };
     save.onClick = [this] { saveOver(); };
@@ -50,7 +58,7 @@ PresetBrowser::PresetBrowser (UiContext& c) : ctx (c)
         pm.setFavourite (info, ! pm.isFavourite (info));
         refresh();
     };
-    for (auto* b : { &close, &init, &save, &saveAsBtn, &del, &favBtn })
+    for (auto* b : { &close, &init, &save, &saveAsBtn, &del, &favBtn, &rescanBtn, &tagsBtn })
         addAndMakeVisible (b);
     setWantsKeyboardFocus (true);
     refresh();
@@ -60,6 +68,12 @@ void PresetBrowser::refresh()
 {
     auto& pm = ctx.proc.presets();
     const auto& all = pm.all();
+    {
+        const auto tags = pm.allTags();
+        for (int i = activeTags.size(); --i >= 0;) // drop filters for tags that no longer exist
+            if (! tags.contains (activeTags[i], true))
+                activeTags.remove (i);
+    }
     const auto q = search.getText().trim().toLowerCase();
     rows.clear();
     for (size_t i = 0; i < all.size(); ++i)
@@ -69,8 +83,12 @@ void PresetBrowser::refresh()
         if (bank == 2 && p.factory) continue;
         if (bank == 3 && ! pm.isFavourite (p)) continue;
         if (category >= 0 && p.category != PresetManager::categories()[category]) continue;
+        bool hasTags = true;
+        for (const auto& t : activeTags)
+            hasTags = hasTags && p.tags.contains (t, true);
+        if (! hasTags) continue;
         if (q.isNotEmpty() && ! (p.name.toLowerCase().contains (q) || p.category.toLowerCase().contains (q)
-                                 || p.description.toLowerCase().contains (q)))
+                                 || p.description.toLowerCase().contains (q) || p.tags.joinIntoString (" ").toLowerCase().contains (q)))
             continue;
         rows.push_back ((int) i);
     }
@@ -86,8 +104,97 @@ void PresetBrowser::refresh()
     del.setEnabled (! info.factory && info.file.existsAsFile());
     favBtn.lit = pm.isFavourite (info);
     favBtn.repaint();
+    resized(); // the tag chips may need more or fewer rows
     list.repaint();
     repaint();
+}
+
+int PresetBrowser::layoutChips (int x, int y, int width, bool apply)
+{
+    if (apply)
+        chips.clear();
+    const auto tags = ctx.proc.presets().allTags();
+    if (tags.isEmpty())
+        return 0;
+    int cx = x, cy = y;
+    const auto f = font (12.0f);
+    auto place = [&] (const juce::String& t) {
+        const int w = (int) std::ceil (juce::GlyphArrangement::getStringWidth (f, t)) + 20;
+        if (cx + w > x + width && cx > x)
+        {
+            cx = x;
+            cy += 26;
+        }
+        if (apply)
+            chips.push_back ({ t, { cx, cy, w, 22 } });
+        cx += w + 6;
+    };
+    place ("All tags");
+    for (const auto& t : tags)
+        place (t);
+    return cy + 22 - y;
+}
+
+void PresetBrowser::askText (const juce::String& title, const juce::String& message, const juce::String& initial,
+                             std::function<void (const juce::String&)> done)
+{
+    auto* w = new juce::AlertWindow (title, message, juce::MessageBoxIconType::NoIcon);
+    w->addTextEditor ("text", initial);
+    w->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([w, done = std::move (done)] (int r) {
+        const auto text = w->getTextEditorContents ("text").trim();
+        if (r == 1 && text.isNotEmpty())
+            done (text);
+    }), true);
+}
+
+// Tick / untick tags on one preset, or make a new one.
+void PresetBrowser::showTagMenu (const PresetInfo& p, juce::Component* target)
+{
+    auto& pm = ctx.proc.presets();
+    const auto tags = pm.allTags();
+    juce::PopupMenu m;
+    m.addSectionHeader ("Tags for " + p.name);
+    for (int i = 0; i < tags.size(); ++i)
+        m.addItem (i + 1, tags[i], true, p.tags.contains (tags[i], true));
+    m.addSeparator();
+    m.addItem (10000, "New tag...");
+    if (! p.tags.isEmpty())
+        m.addItem (10001, "Clear tags");
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target),
+                     [this, p, tags, safe = juce::Component::SafePointer<PresetBrowser> (this)] (int r) {
+                         if (safe == nullptr || r <= 0)
+                             return;
+                         auto& mgr = ctx.proc.presets();
+                         auto t = p.tags;
+                         if (r == 10000)
+                         {
+                             askText ("New tag", "Add a tag to \"" + p.name + "\":", {}, [this, p] (const juce::String& name) {
+                                 auto t2 = p.tags;
+                                 t2.addIfNotAlreadyThere (name, true);
+                                 ctx.proc.presets().setTags (p, t2);
+                                 refresh();
+                             });
+                             return;
+                         }
+                         if (r == 10001)
+                             t.clear();
+                         else if (const auto& tag = tags[r - 1]; t.contains (tag, true))
+                             t.removeString (tag, true);
+                         else
+                             t.add (tag);
+                         mgr.setTags (p, t);
+                         refresh();
+                     });
+}
+
+juce::String PresetBrowser::getTooltipForRow (int row)
+{
+    if (row < 0 || row >= (int) rows.size())
+        return {};
+    const auto& p = ctx.proc.presets().all()[(size_t) rows[(size_t) row]];
+    return p.description + (p.tags.isEmpty() ? juce::String() : "\nTags: " + p.tags.joinIntoString (", "));
 }
 
 void PresetBrowser::step (int delta)
@@ -164,10 +271,18 @@ void PresetBrowser::resized()
     r.removeFromLeft (12);
     infoArea = r.removeFromRight (280);
     r.removeFromRight (12);
-    search.setBounds (r.removeFromTop (32));
+    auto top = r.removeFromTop (32);
+    rescanBtn.setBounds (top.removeFromRight (90));
+    top.removeFromRight (8);
+    search.setBounds (top);
     r.removeFromTop (8);
-    list.setBounds (r);
-    auto b = infoArea.withTrimmedTop (200);
+    const int ch = layoutChips (r.getX(), r.getY(), r.getWidth(), true);
+    chipArea = r.removeFromTop (ch);
+    if (ch > 0)
+        r.removeFromTop (8);
+    list.setBounds (r.withTrimmedBottom (18));
+    tagsBtn.setBounds (infoArea.getX(), infoArea.getY() + 186, infoArea.getWidth(), 26);
+    auto b = infoArea.withTrimmedTop (226);
     auto row = [&b] { auto x = b.removeFromTop (30); b.removeFromTop (6); return x; };
     favBtn.setBounds (row());
     save.setBounds (row());
@@ -218,7 +333,24 @@ void PresetBrowser::paint (juce::Graphics& g)
         g.drawText ("by " + info.author, ir.removeFromTop (20), juce::Justification::centredLeft);
     g.setColour (col::text);
     g.setFont (font (12.5f));
-    g.drawFittedText (info.description, ir.removeFromTop (110).reduced (0, 6), juce::Justification::topLeft, 6);
+    g.drawFittedText (info.description, ir.removeFromTop (90).reduced (0, 6), juce::Justification::topLeft, 5);
+    g.setColour (col::gold);
+    g.setFont (font (12.0f));
+    g.drawFittedText (info.tags.isEmpty() ? juce::String ("No tags") : "Tags: " + info.tags.joinIntoString (", "),
+                      ir.removeFromTop (34), juce::Justification::topLeft, 2);
+    // Tag chips
+    for (const auto& [tag, rr] : chips)
+    {
+        const bool all = tag == "All tags";
+        const bool on = all ? activeTags.isEmpty() : activeTags.contains (tag, true);
+        g.setColour (on ? col::accentDim : col::panel);
+        g.fillRoundedRectangle (rr.toFloat(), 11.0f);
+        g.setColour (on ? col::accent : col::border);
+        g.drawRoundedRectangle (rr.toFloat().reduced (0.5f), 11.0f, 1.0f);
+        g.setColour (on ? juce::Colours::white : (all ? col::textDim : col::text));
+        g.setFont (font (12.0f));
+        g.drawText (tag, rr, juce::Justification::centred);
+    }
     g.setColour (col::textFaint);
     g.setFont (font (11.0f));
     g.drawText (juce::String ((int) rows.size()) + " presets", list.getBounds().translated (0, 0).removeFromBottom (0).withHeight (16).translated (0, 2),
@@ -240,24 +372,84 @@ void PresetBrowser::paintListBoxItem (int row, juce::Graphics& g, int w, int h, 
     }
     g.setColour (selected ? juce::Colours::white : col::text);
     g.setFont (font (13.5f));
-    g.drawText (p.name, 26, 0, w / 2, h, juce::Justification::centredLeft);
+    g.drawText (p.name, 26, 0, (int) (w * 0.42f) - 30, h, juce::Justification::centredLeft);
     g.setColour (selected ? juce::Colours::white : col::textDim);
     g.setFont (font (12.0f));
-    g.drawText (p.category, w / 2 + 30, 0, w / 4, h, juce::Justification::centredLeft);
-    g.drawText (p.factory ? "Factory" : "User", w * 3 / 4 + 30, 0, w / 4 - 40, h, juce::Justification::centredLeft);
+    g.drawText (p.category, (int) (w * 0.42f), 0, (int) (w * 0.16f), h, juce::Justification::centredLeft);
+    g.setColour (selected ? juce::Colours::white.withAlpha (0.8f) : col::gold.withAlpha (0.75f));
+    g.setFont (font (11.5f));
+    g.drawText (p.tags.joinIntoString (", "), (int) (w * 0.58f), 0, (int) (w * 0.30f), h, juce::Justification::centredLeft);
+    g.setColour (selected ? juce::Colours::white : col::textDim);
+    g.setFont (font (12.0f));
+    g.drawText (p.factory ? "Factory" : "User", (int) (w * 0.89f), 0, (int) (w * 0.11f) - 4, h, juce::Justification::centredLeft);
 }
 
-void PresetBrowser::listBoxItemClicked (int row, const juce::MouseEvent&)
+void PresetBrowser::listBoxItemClicked (int row, const juce::MouseEvent& e)
 {
     if (row < 0 || row >= (int) rows.size())
         return;
     auto& pm = ctx.proc.presets();
+    if (e.mods.isPopupMenu())
+    {
+        showTagMenu (pm.all()[(size_t) rows[(size_t) row]], &list);
+        return;
+    }
     pm.load (pm.all()[(size_t) rows[(size_t) row]]);
     refresh();
 }
 
 void PresetBrowser::mouseDown (const juce::MouseEvent& e)
 {
+    for (const auto& [tag, rr] : chips)
+        if (rr.contains (e.getPosition()))
+        {
+            if (tag == "All tags")
+            {
+                activeTags.clear();
+                refresh();
+                return;
+            }
+            if (e.mods.isPopupMenu())
+            {
+                juce::PopupMenu m;
+                m.addSectionHeader ("Tag: " + tag);
+                m.addItem (1, "Rename tag...");
+                m.addItem (2, "Delete tag...");
+                m.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (localAreaToGlobal (rr)),
+                                 [this, tag, safe = juce::Component::SafePointer<PresetBrowser> (this)] (int r) {
+                                     if (safe == nullptr)
+                                         return;
+                                     if (r == 1)
+                                         askText ("Rename tag", "New name for \"" + tag + "\" (on every preset):", tag,
+                                                  [this, tag] (const juce::String& to) {
+                                                      ctx.proc.presets().renameTag (tag, to);
+                                                      if (activeTags.contains (tag, true))
+                                                      {
+                                                          activeTags.removeString (tag, true);
+                                                          activeTags.addIfNotAlreadyThere (to, true);
+                                                      }
+                                                      refresh();
+                                                  });
+                                     else if (r == 2)
+                                         juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "Delete tag",
+                                                                             "Remove the tag \"" + tag + "\" from every preset?", "Delete", "Cancel", nullptr,
+                                                                             juce::ModalCallbackFunction::create ([this, tag] (int ok) {
+                                                                                 if (ok == 1)
+                                                                                 {
+                                                                                     ctx.proc.presets().deleteTag (tag);
+                                                                                     refresh();
+                                                                                 }
+                                                                             }));
+                                 });
+                return;
+            }
+            if (activeTags.contains (tag, true))
+                activeTags.removeString (tag, true);
+            else
+                activeTags.add (tag);
+            refresh();
+            return;
+        }
     for (int i = 0; i < 4; ++i)
         if (bankRow (i).contains (e.getPosition()))
         {

@@ -380,7 +380,26 @@ public:
             owner.commit ("Seq apply random");
         };
         regen.litColour = col::gold;
-        for (auto* b : { &clear, &regen, &apply })
+        generate.text = "generate";
+        generate.fontSize = 11.0f;
+        generate.setTooltip ("Write a new pattern: rhythm, notes in the chosen scale, accents and octaves (locked steps stay). "
+                             "The arrow sets how busy it is, the range, octave jumps and slides");
+        generate.onClick = [this] {
+            cs::seqGenerate (owner.pat, owner.seqParams, (uint32_t) juce::Random::getSystemRandom().nextInt() | 1u, genSettings());
+            owner.commit ("Seq generate");
+        };
+        genMenu.icon = [] (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour c) {
+            juce::Path p;
+            const auto cx = r.getCentreX(), cy = r.getCentreY();
+            p.addTriangle (cx - 3.5f, cy - 1.8f, cx + 3.5f, cy - 1.8f, cx, cy + 2.2f);
+            g.setColour (c);
+            g.fillPath (p);
+        };
+        genMenu.setTooltip ("Generate settings");
+        genMenu.onClick = [this] { showGenerateMenu(); };
+        generate.setBounds (194, 220, 48, 18);
+        genMenu.setBounds (244, 220, 16, 18);
+        for (auto* b : { &clear, &regen, &apply, &generate, &genMenu })
             addAndMakeVisible (b);
         clear.setBounds (8, 244, 26, 22);
         regen.setBounds (38, 244, 80, 22);
@@ -425,7 +444,46 @@ public:
 
 private:
     SeqPage& owner;
-    FlatButton seqBtn, arpBtn, presets, clear, regen, apply;
+    FlatButton seqBtn, arpBtn, presets, clear, regen, apply, generate, genMenu;
+    static cs::SeqGenerateSettings& genSettings()
+    {
+        static cs::SeqGenerateSettings g; // per session, shared by every editor
+        return g;
+    }
+    void showGenerateMenu()
+    {
+        auto& g = genSettings();
+        juce::PopupMenu m;
+        m.addSectionHeader ("Generate");
+        m.addItem (1, "Sparse", true, g.density < 0.5f);
+        m.addItem (2, "Medium", true, g.density >= 0.5f && g.density < 0.8f);
+        m.addItem (3, "Busy", true, g.density >= 0.8f);
+        m.addSeparator();
+        m.addItem (11, "Range: a fifth", true, g.range == 7);
+        m.addItem (12, "Range: an octave", true, g.range == 12);
+        m.addSeparator();
+        m.addItem (21, "No octave jumps", true, g.octaves <= 0.0f);
+        m.addItem (22, "Some octave jumps", true, g.octaves > 0.0f && g.octaves < 0.3f);
+        m.addItem (23, "Lots of octave jumps", true, g.octaves >= 0.3f);
+        m.addSeparator();
+        m.addItem (31, "Slides", true, g.slides > 0.0f);
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&genMenu), [] (int r) {
+            auto& gs = genSettings();
+            switch (r)
+            {
+                case 1: gs.density = 0.35f; break;
+                case 2: gs.density = 0.65f; break;
+                case 3: gs.density = 0.9f; break;
+                case 11: gs.range = 7; break;
+                case 12: gs.range = 12; break;
+                case 21: gs.octaves = 0.0f; break;
+                case 22: gs.octaves = 0.15f; break;
+                case 23: gs.octaves = 0.4f; break;
+                case 31: gs.slides = gs.slides > 0.0f ? 0.0f : 0.15f; break;
+                default: break;
+            }
+        });
+    }
     juce::String patternName;
     int patternIndex = -1;
 

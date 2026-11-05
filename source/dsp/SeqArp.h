@@ -103,6 +103,17 @@ uint32_t seqNextSeed (uint32_t seed) noexcept;
 float seqSlideSeconds (float slide) noexcept;
 int seqSnapToScale (int semis, const std::array<float, 12>& weights) noexcept;
 
+// "Generate": writes a new pattern (rhythm, pitches in the current scale, octaves,
+// accents, gates, slides) from a seed. Locked columns keep their steps.
+struct SeqGenerateSettings
+{
+    float density = 0.65f; // how many steps play (0..1)
+    int range = 12;        // highest pitch above the played note, in semitones
+    float octaves = 0.15f; // chance of an octave jump per step
+    float slides = 0.0f;   // chance of a slide per step
+};
+void seqGenerate (SeqPattern& pat, const SeqParams& p, uint32_t seed, const SeqGenerateSettings& g) noexcept;
+
 class SeqArp
 {
 public:

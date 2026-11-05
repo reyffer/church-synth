@@ -198,6 +198,7 @@ static void testHeavyPatchSane()
 }
 
 // Regression: drive used to jump +3 dB at the first touch, then get quieter.
+// Since feedback round 2 it gets a few dB louder on purpose, smoothly.
 static void testDriveLevelIsSmooth()
 {
     auto levelDb = [] (float drive) {
@@ -218,9 +219,123 @@ static void testDriveLevelIsSmooth()
         const float d = (float) i / 50.0f;
         const float lv = levelDb (d);
         CHECK (std::abs (lv - prev) < 0.75f, "drive: no level jumps between neighbouring settings");
-        CHECK (std::abs (lv - base) < 3.0f, "drive: level stays within 3 dB of undriven");
+        CHECK (lv - base > -1.5f && lv - base < 5.0f, "drive: level rises at most ~5 dB (pushing the filter)");
         prev = lv;
     }
+}
+
+// Drive is audible even with the filter closed: harmonics above the cutoff go up.
+static void testDriveAddsHarmonics()
+{
+    auto hfRatioDb = [] (float drive) {
+        auto sPtr = std::make_unique<SynthCore>();
+        SynthCore& s = *sPtr;
+        s.setSampleRate (48000.0f);
+        s.params.filter[0].mode = LP12;
+        s.params.filter[0].cutoff = 700.0f;
+        s.params.filter[0].drive = drive;
+        s.params.masterVolume = 0.2f;
+        s.noteOn (48, 1.0f);
+        std::vector<float> l (48000), r (48000);
+        s.render (l.data(), r.data(), 48000);
+        const double f0 = 440.0 * std::pow (2.0, (48 - 69) / 12.0);
+        double lo = 0.0, hi = 0.0;
+        for (int h = 1; h < 40; ++h)
+        {
+            double re = 0.0, im = 0.0;
+            for (int i = 24000; i < 48000; ++i)
+            {
+                const double ph = 2.0 * 3.14159265358979 * f0 * h * i / 48000.0;
+                re += l[(size_t) i] * std::cos (ph);
+                im -= l[(size_t) i] * std::sin (ph);
+            }
+            (h <= 7 ? lo : hi) += re * re + im * im;
+        }
+        return 10.0 * std::log10 (hi / lo);
+    };
+    CHECK (hfRatioDb (1.0f) - hfRatioDb (0.0f) > 4.0, "drive: brighter above the cutoff at full drive");
+}
+
+
+// Rotary: on Fast the horn spins at about 6.7 Hz (level wobble on a high tone at that
+// rate); Slow is much slower; it ramps between the two instead of jumping.
+static void testRotarySpeeds()
+{
+    auto wobbleHz = [] (float speedKnob, int seconds) {
+        auto e = fx::makeEffect (fx::FxRotary, 48000.0f);
+        float p[fx::kFxParams] {};
+        const auto& d = fx::fxInfo (fx::FxRotary).defaults;
+        for (int k = 0; k < fx::kFxParams; ++k) p[k] = d[(size_t) k];
+        p[0] = speedKnob;
+        const int n = 48000 * seconds;
+        std::vector<float> l ((size_t) n), r ((size_t) n);
+        for (int i = 0; i < n; ++i) l[(size_t) i] = r[(size_t) i] = 0.3f * std::sin (2.0f * 3.14159265f * 3000.0f * (float) i / 48000.0f);
+        fx::FxContext fc;
+        for (int i = 0; i < n; i += 256) e->process (l.data() + i, r.data() + i, 256, p, false, fc);
+        // envelope of the left channel, last 2 s, in 5 ms frames; find the strongest wobble rate
+        std::vector<float> env;
+        for (int i = n - 96000; i + 240 <= n; i += 240)
+        {
+            double s2 = 0.0;
+            for (int k = 0; k < 240; ++k) s2 += l[(size_t) (i + k)] * l[(size_t) (i + k)];
+            env.push_back ((float) std::sqrt (s2 / 240.0));
+        }
+        float mean = 0.0f;
+        for (float v : env) mean += v;
+        mean /= (float) env.size();
+        float bestHz = 0.0f, best = 0.0f;
+        for (float hz = 0.25f; hz < 12.0f; hz += 0.05f)
+        {
+            double re = 0.0, im = 0.0;
+            for (size_t k = 0; k < env.size(); ++k)
+            {
+                const double ph = 2.0 * 3.14159265 * hz * (double) k * 0.005;
+                re += (env[k] - mean) * std::cos (ph);
+                im += (env[k] - mean) * std::sin (ph);
+            }
+            const float m = (float) (re * re + im * im);
+            if (m > best) { best = m; bestHz = hz; }
+        }
+        return bestHz;
+    };
+    const float fast = wobbleHz (1.0f, 4), slow = wobbleHz (0.0f, 6);
+    CHECK (fast > 5.5f && fast < 8.0f, "rotary: fast horn about 6-7 Hz");
+    CHECK (slow > 0.4f && slow < 1.4f, "rotary: slow horn below 1.5 Hz");
+}
+
+
+// Sequencer Generate: pitches stay in the scale, the first step plays the root,
+// density changes how busy it is, and a new seed gives a new pattern.
+static void testSeqGenerate()
+{
+    SeqParams sp;
+    sp.scale = 10; // Major Pentatonic
+    SeqGenerateSettings g;
+    int onSparse = 0, onBusy = 0, differs = 0;
+    for (uint32_t seed = 1; seed < 40; ++seed)
+    {
+        SeqPattern pat;
+        g.density = 0.3f;
+        seqGenerate (pat, sp, seed, g);
+        CHECK (pat.steps[0].on && pat.steps[0].pitch == 0, "generate: first step is the root");
+        for (const auto& st : pat.steps)
+        {
+            CHECK (kSeqScales[10].weights[(size_t) (st.pitch % 12)] > 0.0f, "generate: pitches in the scale");
+            CHECK (st.pitch >= 0 && st.pitch <= 12 && std::abs (st.octave) <= 1, "generate: ranges");
+            onSparse += st.on ? 1 : 0;
+        }
+        SeqPattern busy, other;
+        g.density = 0.9f;
+        seqGenerate (busy, sp, seed, g);
+        seqGenerate (other, sp, seed + 100, g);
+        for (int c = 0; c < kSeqSteps; ++c)
+        {
+            onBusy += busy.steps[(size_t) c].on ? 1 : 0;
+            differs += busy.steps[(size_t) c].pitch != other.steps[(size_t) c].pitch ? 1 : 0;
+        }
+    }
+    CHECK (onBusy > onSparse + 100, "generate: density matters");
+    CHECK (differs > 200, "generate: new seed, new pattern");
 }
 
 // --- Milestone 2 ----------------------------------------------------------
@@ -1584,6 +1699,9 @@ static void testVintageChorusIsWide()
 
 int main()
 {
+    testDriveAddsHarmonics();
+    testRotarySpeeds();
+    testSeqGenerate();
     testFxPowerSwitch();
     testOutputLimiter();
     testUnisonKeepsLevel();

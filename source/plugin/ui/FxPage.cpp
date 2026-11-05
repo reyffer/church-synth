@@ -17,7 +17,7 @@ juce::StringArray fxChoices (int type, int k)
     using namespace cs::fx;
     const juce::String name = fxInfo (type).params[(size_t) k] != nullptr ? fxInfo (type).params[(size_t) k] : "";
     if (name == "Ping-Pong" || name == "Auto Makeup" || name == "Auto Gain" || name == "Dark" || name == "Invert"
-        || name == "Mono Bass" || name == "Natural Law" || name == "Wide" || name == "Mono Input")
+        || name == "Mono Bass" || name == "Natural Law" || name == "Wide" || name == "Mono Input" || name == "Brake")
         return { "Off", "On" };
     switch (type)
     {
@@ -56,6 +56,9 @@ juce::StringArray fxChoices (int type, int k)
             break;
         case FxPitchDelay:
             if (k == 3) return { "Normal", "+ Oct Up", "+ Oct Down" };
+            break;
+        case FxRotary:
+            if (k == 0) return { "Slow", "Fast" };
             break;
         default: break;
     }

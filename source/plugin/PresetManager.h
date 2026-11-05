@@ -13,6 +13,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <functional>
+#include <map>
 #include <set>
 #include <vector>
 
@@ -22,6 +23,7 @@ struct PresetInfo
     bool factory = true;
     int factoryIndex = -1; // factory presets
     juce::File file;       // user presets
+    juce::StringArray tags; // effective tags (the preset's own, or the user's edits)
     juce::String key() const { return (factory ? "F/" : "U/") + category + "/" + name; }
 };
 
@@ -48,10 +50,21 @@ public:
     // Writes the current sound to a .csp file (used by save and by the preset-pack exporter).
     static juce::String safeFileName (const juce::String& name);
     bool writePresetFile (const juce::File& file, const juce::String& name, const juce::String& category,
-                          const juce::String& author, const juce::String& description);
+                          const juce::String& author, const juce::String& description,
+                          const juce::StringArray& tags = {});
     juce::ValueTree treeFor (const PresetInfo& p); // the preset's state tree (empty if unreadable)
     int indexOfCurrent();                          // in all(), or -1
     PresetInfo currentInfo();
+
+    // --- Tags ------------------------------------------------------------------------------
+    // Every preset has default tags (factory: built in; user files: a "tags" attribute).
+    // The user's edits are kept in "Preset Tags.xml" next to the Presets folder, so tags
+    // work the same on factory and user presets and survive re-copying preset files.
+    juce::StringArray allTags();                                    // sorted, no duplicates
+    void setTags (const PresetInfo& p, const juce::StringArray& tags);
+    void renameTag (const juce::String& from, const juce::String& to);
+    void deleteTag (const juce::String& tag);
+    static juce::StringArray parseTags (const juce::String& commaList);
 
     bool isFavourite (const PresetInfo& p) const { return favourites.count (p.key()) > 0; }
     void setFavourite (const PresetInfo& p, bool fav);
@@ -91,8 +104,11 @@ private:
     std::vector<PresetInfo> list;
     bool scanned = false;
     std::set<juce::String> favourites;
+    std::map<juce::String, juce::StringArray> tagEdits; // preset key -> tags chosen by the user
 
     void loadFavourites();
+    void loadTagEdits();
+    void saveTagEdits() const;
     void saveFavourites() const;
 };
 
@@ -130,6 +146,7 @@ struct FactoryPreset
     std::function<void (PresetBuilder&)> build;
 };
 const std::vector<FactoryPreset>& factoryPresets();
+juce::StringArray factoryPresetTags (const juce::String& presetName); // default tags of a factory preset
 
 struct FactoryPattern
 {

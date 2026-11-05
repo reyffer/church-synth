@@ -162,6 +162,7 @@ void PresetManager::rescan()
         p.description = fp[i].description;
         p.factory = true;
         p.factoryIndex = (int) i;
+        p.tags = factoryPresetTags (p.name);
         list.push_back (p);
     }
     std::vector<PresetInfo> user;
@@ -175,10 +176,16 @@ void PresetManager::rescan()
             p.description = xml->getStringAttribute ("description");
             p.factory = false;
             p.file = f;
+            p.tags = parseTags (xml->getStringAttribute ("tags"));
             user.push_back (p);
         }
     std::sort (user.begin(), user.end(), [] (const PresetInfo& a, const PresetInfo& b) { return a.name.compareNatural (b.name) < 0; });
     list.insert (list.end(), user.begin(), user.end());
+    loadTagEdits(); // re-read: another instance may have changed them
+    loadFavourites();
+    for (auto& p : list)
+        if (auto it = tagEdits.find (p.key()); it != tagEdits.end())
+            p.tags = it->second;
     scanned = true;
 }
 
@@ -258,8 +265,11 @@ bool PresetManager::save (const juce::String& name, const juce::String& category
         error = "Couldn't create " + folder.getFullPathName();
         return false;
     }
-    const auto file = folder.getChildFile (safeFileName (name) + kExtension);
-    if (! writePresetFile (file, name, category, author, description))
+    const auto cur = currentInfo();
+    // Re-saving the loaded user preset (it may live in a pack subfolder): overwrite it in place.
+    const bool inPlace = ! cur.factory && cur.file.existsAsFile() && cur.name == name.trim();
+    const auto file = inPlace ? cur.file : folder.getChildFile (safeFileName (name) + kExtension);
+    if (! writePresetFile (file, name, category, author, description, cur.tags))
     {
         error = "Couldn't write " + file.getFullPathName();
         return false;
@@ -270,7 +280,8 @@ bool PresetManager::save (const juce::String& name, const juce::String& category
 }
 
 bool PresetManager::writePresetFile (const juce::File& file, const juce::String& name, const juce::String& category,
-                                     const juce::String& author, const juce::String& description)
+                                     const juce::String& author, const juce::String& description,
+                                     const juce::StringArray& tags)
 {
     juce::XmlElement root ("ChurchSynthPreset");
     root.setAttribute ("format", kPresetFormat);
@@ -279,6 +290,8 @@ bool PresetManager::writePresetFile (const juce::File& file, const juce::String&
     root.setAttribute ("author", author);
     root.setAttribute ("description", description);
     root.setAttribute ("version", JucePlugin_VersionString);
+    if (! tags.isEmpty())
+        root.setAttribute ("tags", tags.joinIntoString (", "));
     if (auto inner = currentAsPresetTree (name.trim(), category, author, description).createXml())
         root.addChildElement (inner.release());
     return root.writeTo (file);
@@ -290,6 +303,8 @@ bool PresetManager::remove (const PresetInfo& p)
         return false;
     const bool ok = p.file.deleteFile();
     setFavourite (p, false);
+    if (tagEdits.erase (p.key()) > 0)
+        saveTagEdits();
     rescan();
     return ok;
 }
@@ -331,6 +346,91 @@ void PresetManager::saveFavourites() const
     for (const auto& f : favourites)
         s << f << "\n";
     rootFolder().getChildFile ("Favourites.txt").replaceWithText (s);
+}
+
+// --- Tags ------------------------------------------------------------------------------
+juce::StringArray PresetManager::parseTags (const juce::String& commaList)
+{
+    juce::StringArray t;
+    t.addTokens (commaList, ",", "\"");
+    t.trim();
+    t.removeEmptyStrings();
+    t.removeDuplicates (true);
+    return t;
+}
+
+juce::StringArray PresetManager::allTags()
+{
+    juce::StringArray t;
+    for (const auto& p : all())
+        for (const auto& tag : p.tags)
+            if (! t.contains (tag, true))
+                t.add (tag);
+    t.sortNatural();
+    return t;
+}
+
+void PresetManager::setTags (const PresetInfo& p, const juce::StringArray& tags)
+{
+    all();
+    tagEdits[p.key()] = tags;
+    for (auto& q : list)
+        if (q.key() == p.key())
+            q.tags = tags;
+    saveTagEdits();
+}
+
+void PresetManager::renameTag (const juce::String& from, const juce::String& to)
+{
+    const auto newName = to.trim();
+    if (newName.isEmpty() || from == newName)
+        return;
+    all();
+    for (auto& p : list)
+        if (const int i = p.tags.indexOf (from, true); i >= 0)
+        {
+            auto t = p.tags;
+            if (t.contains (newName, true))
+                t.remove (i);
+            else
+                t.set (i, newName);
+            p.tags = t;
+            tagEdits[p.key()] = t;
+        }
+    saveTagEdits();
+}
+
+void PresetManager::deleteTag (const juce::String& tag)
+{
+    all();
+    for (auto& p : list)
+        if (p.tags.contains (tag, true))
+        {
+            p.tags.removeString (tag, true);
+            tagEdits[p.key()] = p.tags;
+        }
+    saveTagEdits();
+}
+
+void PresetManager::loadTagEdits()
+{
+    tagEdits.clear();
+    if (auto xml = juce::XmlDocument::parse (rootFolder().getChildFile ("Preset Tags.xml")))
+        for (auto* e : xml->getChildWithTagNameIterator ("PRESET"))
+            tagEdits[e->getStringAttribute ("key")] = parseTags (e->getStringAttribute ("tags"));
+}
+
+void PresetManager::saveTagEdits() const
+{
+    rootFolder().createDirectory();
+    juce::XmlElement root ("PRESET_TAGS");
+    for (const auto& [key, tags] : tagEdits)
+    {
+        auto* e = root.createNewChildElement ("PRESET");
+        e->setAttribute ("key", key);
+        e->setAttribute ("tags", tags.joinIntoString (", "));
+    }
+    root.writeTo (rootFolder().getChildFile ("Preset Tags.xml"));
 }
 
 void PresetManager::setFavourite (const PresetInfo& p, bool fav)

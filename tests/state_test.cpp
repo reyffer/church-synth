@@ -139,7 +139,13 @@ static int exportPacks (const juce::File& dir)
             p.restoreStateTree (tree, ChurchSynthProcessor::LoadKind::Preset);
             p.apvts.getParameter ("master_vol")->setValueNotifyingHost (std::round (vol * 100.0f) / 100.0f);
             const auto file = folder.getChildFile (PresetManager::safeFileName (fp.name) + PresetManager::kExtension);
-            if (! p.presets().writePresetFile (file, fp.name, fp.category, "Church Synth", fp.description))
+            const auto tags = pack.tags (fp.name);
+            if (tags.isEmpty())
+            {
+                std::printf ("FAIL: %s has no tags\n", fp.name);
+                ++failures;
+            }
+            if (! p.presets().writePresetFile (file, fp.name, fp.category, "Church Synth", fp.description, tags))
             {
                 std::printf ("FAIL: couldn't write %s\n", file.getFullPathName().toRawUTF8());
                 ++failures;
@@ -471,6 +477,62 @@ int main (int argc, char** argv)
         {
             std::printf ("FAIL: user preset round trip\n");
             ++failures;
+        }
+        // Tags: the saved preset carries the tags it was made from; edits, renames and
+        // deletes persist (Preset Tags.xml) and survive a rescan.
+        {
+            const auto tagFile = PresetManager::rootFolder().getChildFile ("Preset Tags.xml");
+            const bool hadTagFile = tagFile.existsAsFile();
+            const auto tagBackup = tagFile.loadFileAsString();
+            auto find = [&pm] (const juce::String& n) {
+                for (const auto& info : pm.all())
+                    if (info.name == n)
+                        return info;
+                return PresetInfo {};
+            };
+            const auto sanctuaryInfo = find ("Sanctuary Pad");
+            if (! sanctuaryInfo.tags.contains ("Pad") || ! pm.allTags().contains ("Organ"))
+            {
+                std::printf ("FAIL: factory tags missing\n");
+                ++failures;
+            }
+            pm.setTags (saved, { "zz Test Tag", "Pad" });
+            pm.rescan();
+            if (! find (testName).tags.contains ("zz Test Tag"))
+            {
+                std::printf ("FAIL: tag edit not kept after rescan\n");
+                ++failures;
+            }
+            pm.renameTag ("zz Test Tag", "zz Renamed Tag");
+            pm.rescan();
+            if (! find (testName).tags.contains ("zz Renamed Tag") || pm.allTags().contains ("zz Test Tag"))
+            {
+                std::printf ("FAIL: tag rename\n");
+                ++failures;
+            }
+            pm.deleteTag ("zz Renamed Tag");
+            pm.rescan();
+            if (pm.allTags().contains ("zz Renamed Tag") || ! find (testName).tags.contains ("Pad"))
+            {
+                std::printf ("FAIL: tag delete\n");
+                ++failures;
+            }
+            // A preset saved from a tagged one keeps its tags in the file.
+            pm.load (sanctuaryInfo);
+            const juce::String copyName = "zz Church Synth tag copy";
+            pm.save (copyName, "Pad", "test", "", err);
+            const auto copy = find (copyName);
+            if (! copy.tags.contains ("Worship") || ! copy.file.loadFileAsString().contains ("tags=\""))
+            {
+                std::printf ("FAIL: saved preset lost its tags\n");
+                ++failures;
+            }
+            pm.remove (copy);
+            if (hadTagFile)
+                tagFile.replaceWithText (tagBackup);
+            else
+                tagFile.deleteFile();
+            pm.rescan();
         }
         pm.remove (saved);
 
