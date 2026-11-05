@@ -28,5 +28,6 @@ struct FxParams
     float busVolume[2] { 1.0f, 1.0f }; // A, B (linear, 0..1.5)
     float auxSend = 0.0f, auxReturn = 1.0f;
     bool auxPre = false; // send taken before (true) or after (false) the A/B buses
+    bool on = true;      // whole FX section (off = dry, effects not processed)
 };
 } // namespace cs::fx

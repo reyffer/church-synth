@@ -7,6 +7,7 @@ namespace cs
 void SynthCore::setSampleRate (float sr) noexcept
 {
     sampleRate = sr;
+    limRelease = 1.0f - std::exp (-1.0f / (0.15f * sr)); // 150 ms limiter release
     seq.setSampleRate (sr);
     for (auto& v : voices)
         v.setSampleRate (sr);
@@ -567,11 +568,21 @@ void SynthCore::renderChunk (float* outL, float* outR, int n) noexcept
     fx::FxContext ctx;
     ctx.bpm = transport.bpm;
     fxRack.process (gParams->fx, in, outL, outR, n, ctx);
-    const float g = params.masterVolume;
+    // Output: +6 dB make-up after the FX (the voices run with headroom for the
+    // effects), master volume, then a safety limiter so big chords never clip.
+    constexpr float kOutputGain = 2.0f;
+    const float g = params.masterVolume * kOutputGain;
     for (int i = 0; i < n; ++i)
     {
-        outL[i] *= g;
-        outR[i] *= g;
+        float l = outL[i] * g, r = outR[i] * g;
+        const float pk = std::max (std::abs (l), std::abs (r));
+        limEnv = pk > limEnv ? pk : limEnv + limRelease * (pk - limEnv);
+        const float gr = limEnv > kLimitThreshold ? kLimitThreshold / limEnv : 1.0f;
+        l *= gr;
+        r *= gr;
+        // Anything the limiter's instant attack lets through is rounded off below full scale.
+        outL[i] = std::abs (l) > 0.95f ? std::copysign (0.95f + 0.05f * std::tanh ((std::abs (l) - 0.95f) * 20.0f), l) : l;
+        outR[i] = std::abs (r) > 0.95f ? std::copysign (0.95f + 0.05f * std::tanh ((std::abs (r) - 0.95f) * 20.0f), r) : r;
     }
     renderEpoch.fetch_add (1, std::memory_order_acq_rel);
 

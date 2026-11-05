@@ -24,7 +24,7 @@ private:
     UiContext& ctx;
     FlatButton menu, browser, fav, prev, next, save;
     FlatButton synthBtn { "SYNTH" }, fxBtn { "FX" }, seqBtn { "SEQ" };
-    Toggle seqPower;
+    Toggle seqPower, fxPower;
     Knob master;
     juce::String name, category;
     bool modified = false, isFav = false;
@@ -33,10 +33,11 @@ private:
     void mouseDown (const juce::MouseEvent&) override;
 };
 
-class Footer final : public juce::Component
+class Footer final : public juce::Component, private juce::ChangeListener
 {
 public:
     explicit Footer (UiContext& ctx);
+    ~Footer() override;
     void resized() override;
     void paint (juce::Graphics&) override;
     void refresh();
@@ -44,7 +45,8 @@ public:
 
 private:
     UiContext& ctx;
-    FlatButton playMode, undo, redo, historyBtn, routesBtn;
+    FlatButton playMode, undo, redo, historyBtn, routesBtn, done;
+    void changeListenerCallback (juce::ChangeBroadcaster*) override { refresh(); }
     float cpu = 0.0f;
     int voices = 0;
     juce::String learnText;

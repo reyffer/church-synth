@@ -254,7 +254,8 @@ void addFilter (Builder& b, size_t f)
     b.flt (p + "drive", n + "Drive", 0, 1, 0, [f] (SynthParams& s, float v) { s.filter[f].drive = v; });
     b.boolean (p + "analog", n + "Analog", true, [f] (SynthParams& s, float v) { s.filter[f].analog = asBool (v); });
     b.flt (p + "kbd", n + "Key Track", 0, 1, 0, [f] (SynthParams& s, float v) { s.filter[f].keytrack = v; });
-    b.flt (p + "vol", n + "Volume", 0, 1, 1, [f] (SynthParams& s, float v) { s.filter[f].volume = v; });
+    // 0 dB in the middle of the knob, up to +12 dB of make-up after filtering.
+    b.flt (p + "vol", n + "Volume", 0, 4, 1, [f] (SynthParams& s, float v) { s.filter[f].volume = v; }, "gain", 1.0f);
     b.flt (p + "pan", n + "Pan", -1, 1, 0, [f] (SynthParams& s, float v) { s.filter[f].pan = v; });
 
     // --- Milestone 4: filter types (control meanings per type: see MultiFilter.h / SPEC) ---
@@ -404,6 +405,7 @@ void addFx (Builder& b)
     b.flt ("fx_aux_send", "Aux Send", 0, 1, 0, [] (SynthParams& s, float v) { s.fx.auxSend = v; });
     b.flt ("fx_aux_return", "Aux Return", 0, 1, 1, [] (SynthParams& s, float v) { s.fx.auxReturn = v; });
     b.boolean ("fx_aux_pre", "Aux Pre A/B", false, [] (SynthParams& s, float v) { s.fx.auxPre = asBool (v); });
+    b.boolean ("fx_on", "FX On", true, [] (SynthParams& s, float v) { s.fx.on = asBool (v); });
 
     for (size_t sl = 0; sl < 9; ++sl)
     {

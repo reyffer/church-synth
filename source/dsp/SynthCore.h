@@ -96,6 +96,8 @@ private:
     float globalSourceValue (int s) const noexcept;
     const SynthParams& modulatedGlobalParams() noexcept; // params + routes to global destinations (FX, Seq)
     const SynthParams* gParams = &params;
+    static constexpr float kLimitThreshold = 0.891f; // -1 dBFS
+    float limEnv = 0.0f, limRelease = 0.0001f;
 
     // Sequencer / arpeggiator.
     struct SeqSink final : SeqArp::Sink

@@ -117,6 +117,7 @@ public:
         line.prepare ((int) (window * 2.0f) + 8);
     }
     void clear() noexcept { line.clear(); }
+    void setPhase (float p) noexcept { phase = wrap01 (p); }
     float process (float x, float ratio, float spray = 0.0f) noexcept
     {
         line.push (x);

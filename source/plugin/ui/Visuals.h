@@ -77,17 +77,29 @@ private:
     bool active = true;
 };
 
-class EnvDisplay final : public juce::Component, public Refreshable
+// Envelope curve; drag the points to set attack, decay / sustain and release.
+class EnvDisplay final : public juce::Component, public Refreshable, public juce::SettableTooltipClient
 {
 public:
-    EnvDisplay (UiContext& c, juce::String prefix, juce::Colour colour) : ctx (c), p (std::move (prefix)), colourUsed (colour) {}
+    EnvDisplay (UiContext& c, juce::String prefix, juce::Colour colour);
     void paint (juce::Graphics&) override;
     void refreshView() override { repaint(); }
+    void mouseMove (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override { hoverPoint = -1; repaint(); }
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
 
 private:
     UiContext& ctx;
     juce::String p;
     juce::Colour colourUsed;
+    int dragPoint = -1, hoverPoint = -1;
+    float startNorm[2] {};
+    juce::Point<float> points[3]; // attack peak, decay end / sustain, release end (from the last paint)
+    int hitPoint (juce::Point<float>) const;
+    juce::StringArray paramsFor (int point) const;
 };
 
 class LfoDisplay final : public juce::Component, public Refreshable

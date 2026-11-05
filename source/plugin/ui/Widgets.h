@@ -18,7 +18,8 @@ public:
     ChurchSynthProcessor& proc;
 
     int selectedSource = -1; // >= 0: knobs edit this source's route amounts
-    void selectSource (int s);
+    void selectSource (int s); // toggles
+    void clearSource() { if (selectedSource >= 0) { selectedSource = -1; sendChangeMessage(); } }
 
     void refreshRoutes(); // re-read from the processor (call when it may have changed)
     const cs::ModRouting& routes() const noexcept { return cached; }
@@ -102,6 +103,8 @@ public:
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
 
     std::function<juce::String (int)> displayName; // optional shorter names
+    std::function<juce::String (int)> menuName;    // optional longer names in the menu
+    std::function<void (int)> onUserChange;        // after the user picks a new value
     std::function<void (juce::PopupMenu&)> extraMenu; // appended (ids >= 10000 go to onExtra)
     std::function<void (int)> onExtra;
     juce::Colour textColour = col::accent;

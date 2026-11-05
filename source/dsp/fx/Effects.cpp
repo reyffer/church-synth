@@ -41,11 +41,11 @@ const FxInfo kFxInfo[FxTypeCount] = {
     { "Erode", "Distortion", P { "Mod Type", "Frequency", "Amount", "Noise Blend", "Band Freq", "Bandwidth", "Spread", "Drive", "Dry/Wet" },
       D { 0.0f, 0.6f, 0.3f, 0.0f, 0.6f, 0.5f, 0.3f, 0.0f, 0.5f }, false },
     { "Super Unison", "Modulation", P { "Voices", "Detune", "Drift", "Width", "Low Cut", "High Cut", "Dry/Wet" },
-      D { 0.43f, 0.3f, 0.3f, 1.0f, 0.0f, 1.0f, 0.5f }, false },
+      D { 0.43f, 0.45f, 0.3f, 1.0f, 0.0f, 1.0f, 0.6f }, false },
     { "Chorus", "Modulation", P { "Delay", "Depth", "Rate", "Feedback", "Voices", "Shape", "Stereo", "Dry/Wet" },
       D { 0.3f, 0.3f, 0.3f, 0.5f, 0.33f, 0.0f, 1.0f, 0.4f }, true },
-    { "Vintage Chorus", "Modulation", P { "Mode", "Rate", "Depth", "Phase", "Dry/Wet" },
-      D { 0.0f, 0.5f, 0.5f, 1.0f, 0.5f }, false },
+    { "Vintage Chorus", "Modulation", P { "Mode", "Rate", "Depth", "Phase", "Dry/Wet", "Width" },
+      D { 0.0f, 0.5f, 0.5f, 1.0f, 0.5f, 1.0f }, false },
     { "Flanger", "Modulation", P { "Delay", "Depth", "Rate", "Feedback", "Low Cut", "High Cut", "Stereo", "Shape", "Dry/Wet" },
       D { 0.3f, 0.5f, 0.3f, 0.75f, 0.0f, 1.0f, 0.5f, 0.0f, 0.5f }, true },
     { "Vintage Flanger", "Modulation", P { "Rate", "Delay", "Feedback", "Depth", "Wide", "Mono Input", "Dry/Wet" },
@@ -852,14 +852,18 @@ public:
     }
     void reset() override
     {
-        for (auto& s : shift) s.clear();
+        for (int v = 0; v < kMax; ++v)
+        {
+            shift[v].clear();
+            shift[v].setPhase ((float) v * 0.618f); // staggered grains: no shared flutter
+        }
         lc.reset(); hc.reset();
         for (auto& d : drift) d = 0.0f;
     }
     void process (float* l, float* r, int n, const float* p, bool, const FxContext&) noexcept override
     {
         const int voices = 2 + choice (p[0], 7);
-        const float cents = p[1] * 50.0f;
+        const float cents = 100.0f * p[1] * std::sqrt (p[1]); // up to +/-100 cents, fine control at the bottom
         const float driftAmt = p[2];
         const float width = p[3];
         lc.set (filt::prewarp (expMap (p[4], 20.0f, 2000.0f), sampleRate));
@@ -871,10 +875,12 @@ public:
         {
             drift[v] += (rng.bi() * 0.5f - drift[v]) * 0.02f;
             const float pos = voices > 1 ? -1.0f + 2.0f * (float) v / (float) (voices - 1) : 0.0f;
-            ratio[v] = std::exp2 ((pos * cents + driftAmt * drift[v] * 8.0f) / 1200.0f);
-            panGains (pos * width, pl[v], pr[v]);
+            ratio[v] = std::exp2 ((pos * cents + driftAmt * drift[v] * 20.0f) / 1200.0f);
+            // Alternate sides so neighbouring detunes don't sit together.
+            const float side = (v % 2 == 0 ? 1.0f : -1.0f) * std::abs (pos);
+            panGains (side * width, pl[v], pr[v]);
         }
-        const float norm = 1.0f / std::sqrt ((float) voices);
+        const float norm = 1.3f / std::sqrt ((float) voices);
         for (int i = 0; i < n; ++i)
         {
             const float in = 0.5f * (l[i] + r[i]);
@@ -977,6 +983,11 @@ public:
         const float base = kBaseMs[mode] * 0.001f * sampleRate;
         const float phaseOff = 0.5f * p[3]; // 1 = opposite phase on L and R (wide)
         const float mix = p[4];
+        // Width: 0 = each side its own chorus line; 1 = the classic sum / difference
+        // output (right side gets the inverted chorus), very wide in stereo and
+        // the chorus folds back to the dry sound in mono.
+        // (needs the dry signal: fades out as Dry/Wet goes from 50 % to 100 %)
+        const float width = std::clamp (p[5], 0.0f, 1.0f) * std::clamp (2.0f * (1.0f - mix), 0.0f, 1.0f);
         pre.set (filt::prewarp (9000.0f, sampleRate));
         post.set (filt::prewarp (8000.0f, sampleRate));
         for (int i = 0; i < n; ++i)
@@ -988,6 +999,7 @@ public:
             float wr = line[0].read (base + depth * lfo.at (phaseOff, true));
             wl = post.lp (0, wl);
             wr = post.lp (1, wr);
+            wr += width * (-wl - wr);
             l[i] = mixEP (l[i], wl, mix);
             r[i] = mixEP (r[i], wr, mix);
         }

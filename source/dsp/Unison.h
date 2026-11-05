@@ -104,6 +104,10 @@ inline void layoutUnison (const EngineParams& p, int count,
     }
 }
 
+// Gain that keeps unison as loud as a single voice. 1/sqrt(N) alone keeps the
+// power of uncorrelated voices, but detuned voices panned across the stereo
+// field still measure ~1.5-2 dB quieter and sound thinner, so we add back the
+// measured drop plus 0.5 dB.
 inline float unisonNorm (const EngineParams& p, int count) noexcept
 {
     if (count == 1)
@@ -112,8 +116,9 @@ inline float unisonNorm (const EngineParams& p, int count) noexcept
     {
         const float mix = std::clamp (p.superMix, 0.0f, 1.0f);
         const float c = 1.0f - 0.55f * mix, s = 0.85f * mix;
-        return 1.0f / std::sqrt (c * c + 6.0f * s * s);
+        return 1.1885f / std::sqrt (c * c + 6.0f * s * s); // +1.5 dB
     }
-    return 1.0f / std::sqrt ((float) count);
+    static constexpr float kComp[kMaxUnison + 1] = { 1.0f, 1.0f, 1.3804f, 1.3335f, 1.3646f, 1.3183f, 1.2589f, 1.2735f, 1.2735f };
+    return kComp[std::clamp (count, 1, kMaxUnison)] / std::sqrt ((float) count);
 }
 } // namespace cs::unison

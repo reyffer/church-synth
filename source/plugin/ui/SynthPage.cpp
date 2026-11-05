@@ -145,7 +145,8 @@ public:
                 toggle (x + "sync", Toggle::TextPill, "sync", { bx + 140, y + 6, 44, 16 }).setTooltip ("Hard sync Osc 2 to Osc 1");
             add<OscDisplay> ({ bx + 124, y + 24, 160, 46 }, ctx, op + "wave", op + "width", op + "vol");
             add<WaveSelector> ({ bx + 124, y + 72, 160, 22 }, ctx, op + "wave");
-            knob (op + "width", "Width", { bx + 290, y + 26, 54, 66 });
+            widths[o] = &knob (op + "width", "Width", { bx + 290, y + 26, 54, 66 });
+            widths[o]->setTooltip ("Pulse width (Square) / slope (Triangle)");
             knob (op + "vol", "Volume", { bx + 346, y + 26, 54, 66 });
             if (o < 2)
                 knob (op + "fm", "FM", { bx + 404, y + 30, 46, 58 }).setTooltip (o == 0 ? "Osc 3 / Noise FMs Osc 1" : "Osc 3 / Noise FMs Osc 2");
@@ -182,11 +183,18 @@ public:
             c->setVisible (mode == cs::UnisonChord);
         for (auto* c : superOnly)
             c->setVisible (mode == cs::UnisonSuper);
+        // Width only shapes Square and Triangle.
+        for (int o = 0; o < 3; ++o)
+        {
+            const int w = ctx.intValue (x + "o" + juce::String (o + 1) + "_wave");
+            widths[o]->setEnabled (w == cs::WaveSquare || w == cs::WaveTriangle);
+        }
     }
 
 private:
     int e;
     std::vector<juce::Component*> chordOnly, superOnly;
+    Knob* widths[3] {};
 };
 
 class WavetableView final : public ControlPanel
@@ -345,7 +353,7 @@ public:
         add<WaveSelector> ({ bx + 6, 78, 164, 20 }, ctx, "u_osc_wave");
         knob ("u_osc_coarse", "Coarse", { bx + 2, 104, 56, 66 }).setFormatter ([] (float v) { return juce::String ((int) std::lround (v)) + " st"; });
         knob ("u_osc_fine", "Fine", { bx + 60, 104, 56, 66 });
-        knob ("u_osc_width", "Width", { bx + 118, 104, 56, 66 });
+        uWidth = &knob ("u_osc_width", "Width", { bx + 118, 104, 56, 66 });
         knob ("u_osc_vol", "Volume", { bx + 2, 176, 56, 66 });
         knob ("u_osc_fmix", "F1 / F2", { bx + 60, 176, 56, 66 });
         toggle ("u_osc_kbd", Toggle::TextPill, "kbd", { bx + 122, 184, 44, 16 });
@@ -368,10 +376,13 @@ public:
         ControlPanel::refreshView();
         for (auto* s : samples)
             s->repaint();
+        const int w = ctx.intValue ("u_osc_wave");
+        uWidth->setEnabled (w == cs::WaveSquare || w == cs::WaveTriangle);
     }
 
 private:
     Pill* samples[2] {};
+    Knob* uWidth = nullptr;
     std::unique_ptr<juce::FileChooser> chooser;
 
     void chooseFile (int slot)
@@ -547,6 +558,34 @@ public:
         auto& t = pill (p + "type", { 104, 5, 140, 20 });
         t.arrows = true;
         t.textColour = col::text;
+        t.menuName = [] (int i) {
+            static const char* const kDesc[] = {
+                "Classic  -  clean multimode (LP / BP / HP / notch...)",
+                "Cluster  -  several resonant peaks",
+                "Phaser  -  notches that sweep with cutoff",
+                "Formant  -  vowels",
+                "Surgeon  -  very steep, precise",
+                "LoFi  -  sample-rate reduction",
+                "Comb  -  tuned delay (follows the keys)",
+                "Drive  -  aggressive saturated filter",
+                "Allpass  -  phase ripples",
+                "Ladder  -  fat 24 dB transistor ladder (classic mono-synth)",
+                "Sallen-Key  -  biting 12 dB, screams with resonance (semi-modular style)",
+                "OTA 4-Pole  -  smooth 24 dB (classic polysynth)",
+                "SVF Morph  -  morph LP > BP > HP",
+                "Multimode  -  24 / 12 dB LP, BP, HP, notch",
+                "Lowpass Gate  -  plucky, woody decay",
+            };
+            return juce::String (kDesc[juce::jlimit (0, 14, i)]);
+        };
+        // Comb is a tuned delay: when picked, make it follow the keyboard in tune.
+        t.onUserChange = [this, p] (int type) {
+            if (type == cs::FilterComb)
+            {
+                ctx.setValue (p + "cutoff", 261.6f);
+                ctx.setValue (p + "kbd", 1.0f);
+            }
+        };
         cutoff = &knob (p + "cutoff", "Cutoff", { 4, 32, 66, 74 });
         reso = &knob (p + "reso", "Resonance", { 72, 34, 58, 66 });
         drive = &knob (p + "drive", "Drive", { 132, 34, 58, 66 });
@@ -562,7 +601,7 @@ public:
         knob (p + "fm", "FM", { 252, 128, 34, 38 }).setTooltip ("Audio-rate cutoff FM amount");
         fmSrc = &pill (p + "fm_src", { 196, 150, 112, 14 });
         fmSrc->setTooltip ("Filter FM source");
-        knob (p + "vol", "Volume", { 312, 30, 54, 64 });
+        knob (p + "vol", "Volume", { 312, 30, 54, 64 }).setTooltip ("Filter output: 0 dB at the centre, up to +12 dB");
         knob (p + "pan", "Pan", { 312, 98, 54, 64 });
         cutoff->setFormatter ([] (float v) { return v >= 1000.0f ? juce::String (v / 1000.0f, 2) + " kHz" : juce::String (juce::roundToInt (v)) + " Hz"; });
     }

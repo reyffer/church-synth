@@ -36,6 +36,8 @@ private:
     std::atomic<Effect*> effects[kNumFxSlots] {};
     float aL[kMaxBlock] {}, aR[kMaxBlock] {}, bL[kMaxBlock] {}, bR[kMaxBlock] {};
     float xL[kMaxBlock] {}, xR[kMaxBlock] {};
+    float fxMix = 1.0f; // FX section on/off, ramped over ~20 ms
+    void processOn (const FxParams& p, const FxInputs& in, float* outL, float* outR, int n, const FxContext& ctx) noexcept;
 
     void runBus (const FxParams& p, int bus, float* l, float* r, int n, const FxContext& ctx) noexcept;
 };

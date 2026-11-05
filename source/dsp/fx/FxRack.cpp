@@ -23,6 +23,34 @@ void FxRack::runBus (const FxParams& p, int bus, float* l, float* r, int n, cons
 void FxRack::process (const FxParams& p, const FxInputs& in, float* outL, float* outR, int n, const FxContext& ctx) noexcept
 {
     n = std::min (n, kMaxBlock);
+    const float target = p.on ? 1.0f : 0.0f;
+    if (target == 0.0f && fxMix <= 0.0f)
+    {
+        // FX off: everything dry, nothing processed.
+        for (int i = 0; i < n; ++i)
+        {
+            outL[i] = in.mainL[i] + in.toAL[i] + in.toBL[i] + in.directL[i];
+            outR[i] = in.mainR[i] + in.toAR[i] + in.toBR[i] + in.directR[i];
+        }
+        return;
+    }
+    processOn (p, in, outL, outR, n, ctx);
+    if (target == 1.0f && fxMix >= 1.0f)
+        return;
+    // Switching: crossfade between dry and the processed sound.
+    const float step = 1.0f / (0.02f * 48000.0f);
+    for (int i = 0; i < n; ++i)
+    {
+        fxMix = std::clamp (fxMix + (target > fxMix ? step : -step), 0.0f, 1.0f);
+        const float dl = in.mainL[i] + in.toAL[i] + in.toBL[i] + in.directL[i];
+        const float dr = in.mainR[i] + in.toAR[i] + in.toBR[i] + in.directR[i];
+        outL[i] = dl + fxMix * (outL[i] - dl);
+        outR[i] = dr + fxMix * (outR[i] - dr);
+    }
+}
+
+void FxRack::processOn (const FxParams& p, const FxInputs& in, float* outL, float* outR, int n, const FxContext& ctx) noexcept
+{
     const float volA = p.busVolume[0], volB = p.busVolume[1];
 
     // Aux send taken pre-A/B: from everything entering the FX.

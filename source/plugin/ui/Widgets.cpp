@@ -141,6 +141,8 @@ juce::String formatValue (const cs::ParamDef& d, float v)
         return juce::String (v, std::abs (v) < 1.0f ? 2 : 1) + " st";
     if (d.unit == "deg")
         return juce::String (juce::roundToInt (v)) + juce::String::fromUTF8 ("\xc2\xb0");
+    if (d.unit == "gain")
+        return v <= 0.0005f ? juce::String ("-inf dB") : juce::String (juce::Decibels::gainToDecibels (v), 1) + " dB";
     if (d.unit == "BPM")
         return juce::String (v, 1) + " BPM";
     if (juce::approximatelyEqual (d.min, 0.0f) && juce::approximatelyEqual (d.max, 1.0f))
@@ -333,9 +335,7 @@ void Knob::itemDropped (const SourceDetails& s)
     const int src = s.description.toString().fromFirstOccurrenceOf ("modsrc:", false, false).getIntValue();
     if (! ctx.hasRoute (src, dest))
         ctx.setRouteAmount (src, dest, 0.25f);
-    if (ctx.selectedSource != src)
-        ctx.selectSource (src);
-    repaint();
+    repaint(); // the route is made; knobs stay in normal mode (select the tile to edit amounts)
 }
 
 void Knob::showContextMenu (UiContext& ctx, const juce::String& paramId, juce::Component* target)
@@ -423,7 +423,10 @@ void Pill::step (int delta)
     if (pdef == nullptr || att == nullptr)
         return;
     const int n = pdef->choices.size();
-    att->setValueAsCompleteGesture ((float) ((index + delta + n) % n));
+    const int v = (index + delta + n) % n;
+    att->setValueAsCompleteGesture ((float) v);
+    if (onUserChange)
+        onUserChange (v);
 }
 
 void Pill::mouseDown (const juce::MouseEvent& e)
@@ -446,7 +449,7 @@ void Pill::mouseDown (const juce::MouseEvent& e)
     for (int i = 0; i < pdef->choices.size(); ++i)
     {
         const auto& c = pdef->choices[i];
-        const juce::String shown = displayName ? displayName (i) : c;
+        const juce::String shown = menuName ? menuName (i) : (displayName ? displayName (i) : c);
         if (c.contains (": "))
         {
             const auto cat = c.upToFirstOccurrenceOf (": ", false, false);
@@ -475,6 +478,8 @@ void Pill::mouseDown (const juce::MouseEvent& e)
                                 return;
                             }
                             safe->att->setValueAsCompleteGesture ((float) (r - 1));
+                            if (safe->onUserChange)
+                                safe->onUserChange (r - 1);
                         });
 }
 

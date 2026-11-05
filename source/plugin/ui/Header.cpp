@@ -1,6 +1,9 @@
 #include "Header.h"
 
+#include "BinaryData.h"
+
 #include "../PresetManager.h"
+#include "dsp/ModMatrix.h"
 
 namespace ui
 {
@@ -61,7 +64,7 @@ void iconSave (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour c)
 } // namespace
 
 // ===========================================================================
-TopBar::TopBar (UiContext& uc) : ctx (uc), seqPower (uc, "seq_on", Toggle::Power), master (uc, "master_vol", {})
+TopBar::TopBar (UiContext& uc) : ctx (uc), seqPower (uc, "seq_on", Toggle::Power), fxPower (uc, "fx_on", Toggle::Power), master (uc, "master_vol", {})
 {
     menu.outline = false;
     menu.icon = iconMenu;
@@ -98,9 +101,10 @@ TopBar::TopBar (UiContext& uc) : ctx (uc), seqPower (uc, "seq_on", Toggle::Power
     fxBtn.onClick = [this] { if (onPage) onPage (Page::Fx); };
     seqBtn.onClick = [this] { if (onPage) onPage (Page::Seq); };
     seqPower.setTooltip ("Seq/Arp on/off");
+    fxPower.setTooltip ("FX section on/off");
     master.setTooltip ("Master volume");
     master.setLabel ({});
-    for (auto* comp : std::initializer_list<juce::Component*> { &menu, &browser, &fav, &prev, &next, &save, &synthBtn, &fxBtn, &seqBtn, &seqPower, &master })
+    for (auto* comp : std::initializer_list<juce::Component*> { &menu, &browser, &fav, &prev, &next, &save, &synthBtn, &fxBtn, &seqBtn, &seqPower, &fxPower, &master })
         addAndMakeVisible (comp);
     refresh();
 }
@@ -144,6 +148,7 @@ void TopBar::resized()
     seqPower.setBounds (right.removeFromRight (20).reduced (2, 12));
     right.removeFromRight (8);
     fxBtn.setBounds (right.removeFromRight (50).reduced (2, 9));
+    fxPower.setBounds (right.removeFromRight (20).reduced (2, 12));
     right.removeFromRight (6);
     synthBtn.setBounds (right.removeFromRight (70).reduced (2, 9));
 }
@@ -171,27 +176,22 @@ void TopBar::paint (juce::Graphics& g)
     g.setColour (col::border);
     g.drawHorizontalLine (getHeight() - 1, 0.0f, (float) getWidth());
 
-    // Wordmark: our own logo (a small cross in a circle + CHURCH SYNTH).
+    // Logo: the church lotus (light grey), then the CHURCH SYNTH wordmark.
     {
-        // Logo: a gothic arch window with a latin cross.
-        const float lx = 52.0f, ly = 9.0f, lw = 18.0f, lh = 26.0f;
-        juce::Path arch;
-        arch.startNewSubPath (lx, ly + lh);
-        arch.lineTo (lx, ly + lw * 0.55f);
-        arch.quadraticTo (lx, ly, lx + lw * 0.5f, ly);
-        arch.quadraticTo (lx + lw, ly, lx + lw, ly + lw * 0.55f);
-        arch.lineTo (lx + lw, ly + lh);
-        arch.closeSubPath();
-        g.setColour (col::gold);
-        g.strokePath (arch, juce::PathStrokeType (1.6f));
-        g.fillRect (lx + lw * 0.5f - 1.0f, ly + 6.0f, 2.0f, lh - 9.0f);
-        g.fillRect (lx + 4.5f, ly + 11.0f, lw - 9.0f, 2.0f);
+        const juce::Image lotus = juce::ImageCache::getFromMemory (BinaryData::lotus_png, BinaryData::lotus_pngSize);
+        if (lotus.isValid())
+        {
+            const float lh = 24.0f, lw = lh * (float) lotus.getWidth() / (float) lotus.getHeight();
+            g.setColour (col::text.withAlpha (0.85f));
+            g.drawImage (lotus, { 48.0f, ((float) getHeight() - lh) * 0.5f, lw, lh }, juce::RectanglePlacement::centred, true);
+        }
     }
+    g.setColour (col::gold);
     g.setFont (font (20.0f, true));
-    g.drawText ("CHURCH", 78, 0, 100, getHeight(), juce::Justification::centredLeft);
+    g.drawText ("CHURCH", 82, 0, 100, getHeight(), juce::Justification::centredLeft);
     g.setColour (col::text);
     g.setFont (font (20.0f, false));
-    g.drawText ("SYNTH", 165, 0, 90, getHeight(), juce::Justification::centredLeft);
+    g.drawText ("SYNTH", 169, 0, 90, getHeight(), juce::Justification::centredLeft);
 
     // Preset bar
     auto bar = juce::Rectangle<float> (440.0f, 7.0f, 400.0f, 30.0f);
@@ -235,7 +235,19 @@ Footer::Footer (UiContext& c) : ctx (c)
         b->fontSize = 11.0f;
         addAndMakeVisible (b);
     }
+    done.text = "Done";
+    done.fontSize = 11.0f;
+    done.lit = true;
+    done.setTooltip ("Finish editing this source's modulation (or click any empty area, or press Esc)");
+    done.onClick = [this] { ctx.clearSource(); };
+    addChildComponent (done);
+    ctx.addChangeListener (this);
     refresh();
+}
+
+Footer::~Footer()
+{
+    ctx.removeChangeListener (this);
 }
 
 void Footer::refresh()
@@ -252,6 +264,9 @@ void Footer::refresh()
                                    : juce::String();
     for (auto* b : { &playMode, &undo, &redo })
         b->repaint();
+    done.setVisible (ctx.selectedSource >= 0);
+    if (ctx.selectedSource >= 0)
+        done.litColour = sourceColour (ctx.selectedSource);
     repaint();
 }
 
@@ -268,6 +283,7 @@ void Footer::resized()
     playCaption = right.removeFromRight (66);
     right.removeFromRight (14);
     routesBtn.setBounds (right.removeFromRight (90).reduced (2, 0));
+    done.setBounds (r.getX() + 420, r.getY(), 60, r.getHeight());
 }
 
 void Footer::paint (juce::Graphics& g)
@@ -281,10 +297,22 @@ void Footer::paint (juce::Graphics& g)
     g.drawText ("CPU " + juce::String (juce::roundToInt (cpu * 100.0f)) + " %   Voices " + juce::String (voices),
                 r.removeFromRight (118), juce::Justification::centredRight);
     r.removeFromRight (520);
-    g.setColour (learnText.isNotEmpty() ? col::gold : col::textFaint);
-    g.drawText (learnText.isNotEmpty() ? learnText
-                                       : juce::String ("Select a mod source (or drag it onto a knob) to modulate. Right-click a control for MIDI learn."),
-                r, juce::Justification::centredLeft);
+    if (ctx.selectedSource >= 0)
+    {
+        // Mod-edit mode banner.
+        g.setColour (sourceColour (ctx.selectedSource));
+        g.setFont (font (11.5f, true));
+        g.drawText (juce::String ("Editing ") + cs::modSourceName (ctx.selectedSource)
+                        + ": drag knobs to set amounts, double-click a knob to remove",
+                    r.withWidth (414), juce::Justification::centredLeft);
+    }
+    else
+    {
+        g.setColour (learnText.isNotEmpty() ? col::gold : col::textFaint);
+        g.drawText (learnText.isNotEmpty() ? learnText
+                                           : juce::String ("Click a mod source to edit amounts on the knobs, or drag it onto a knob. Right-click a control for MIDI learn."),
+                    r, juce::Justification::centredLeft);
+    }
     g.setColour (col::textDim);
     g.drawText ("Play Mode", playCaption, juce::Justification::centredRight);
 }

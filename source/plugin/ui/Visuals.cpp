@@ -239,6 +239,99 @@ void FilterDisplay::paint (juce::Graphics& g)
 }
 
 // ===========================================================================
+EnvDisplay::EnvDisplay (UiContext& c, juce::String prefix, juce::Colour colour) : ctx (c), p (std::move (prefix)), colourUsed (colour)
+{
+    setTooltip ("Drag the points: attack, decay and sustain, release. Double-click a point to reset it");
+}
+
+juce::StringArray EnvDisplay::paramsFor (int point) const
+{
+    if (point == 0) return { p + "_a" };
+    if (point == 1) return { p + "_d", p + "_s" };
+    return { p + "_r" };
+}
+
+int EnvDisplay::hitPoint (juce::Point<float> pos) const
+{
+    int best = -1;
+    float bestD = 12.0f;
+    for (int i = 0; i < 3; ++i)
+        if (const float d = points[i].getDistanceFrom (pos); d < bestD)
+        {
+            bestD = d;
+            best = i;
+        }
+    return best;
+}
+
+void EnvDisplay::mouseMove (const juce::MouseEvent& e)
+{
+    const int h = hitPoint (e.position);
+    if (h != hoverPoint)
+    {
+        hoverPoint = h;
+        setMouseCursor (h >= 0 ? juce::MouseCursor::DraggingHandCursor : juce::MouseCursor::NormalCursor);
+        repaint();
+    }
+}
+
+void EnvDisplay::mouseDown (const juce::MouseEvent& e)
+{
+    dragPoint = hitPoint (e.position);
+    if (dragPoint < 0)
+        return;
+    const auto ids = paramsFor (dragPoint);
+    for (int i = 0; i < ids.size(); ++i)
+        if (auto* prm = ctx.param (ids[i]))
+        {
+            startNorm[i] = prm->getValue();
+            prm->beginChangeGesture();
+        }
+}
+
+void EnvDisplay::mouseDrag (const juce::MouseEvent& e)
+{
+    if (dragPoint < 0)
+        return;
+    const auto ids = paramsFor (dragPoint);
+    // Time: relative horizontal drag (the curve rescales as times change); shift = fine.
+    const float speed = e.mods.isShiftDown() ? 1.0f / 1200.0f : 1.0f / 300.0f;
+    if (auto* prm = ctx.param (ids[0]))
+        prm->setValueNotifyingHost (juce::jlimit (0.0f, 1.0f, startNorm[0] + (float) e.getDistanceFromDragStartX() * speed));
+    // Sustain: absolute level.
+    if (dragPoint == 1 && ! ctx.boolValue (p + "_adr"))
+        if (auto* prm = ctx.param (ids[1]))
+        {
+            const auto r = getLocalBounds().toFloat().reduced (2.0f, 4.0f);
+            const float level = juce::jlimit (0.0f, 1.0f, (r.getBottom() - e.position.y) / r.getHeight());
+            prm->setValueNotifyingHost (prm->convertTo0to1 (prm->convertFrom0to1 (0.0f) + level * (prm->convertFrom0to1 (1.0f) - prm->convertFrom0to1 (0.0f))));
+        }
+    repaint();
+}
+
+void EnvDisplay::mouseUp (const juce::MouseEvent&)
+{
+    if (dragPoint >= 0)
+        for (const auto& id : paramsFor (dragPoint))
+            if (auto* prm = ctx.param (id))
+                prm->endChangeGesture();
+    dragPoint = -1;
+}
+
+void EnvDisplay::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    const int h = hitPoint (e.position);
+    if (h < 0)
+        return;
+    for (const auto& id : paramsFor (h))
+        if (auto* prm = ctx.param (id))
+        {
+            prm->beginChangeGesture();
+            prm->setValueNotifyingHost (prm->getDefaultValue());
+            prm->endChangeGesture();
+        }
+}
+
 void EnvDisplay::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat().reduced (2.0f, 4.0f);
@@ -285,10 +378,21 @@ void EnvDisplay::paint (juce::Graphics& g)
     fillUnder (g, path, r, r.getBottom(), colourUsed);
     g.setColour (colourUsed);
     g.strokePath (path, juce::PathStrokeType (1.6f));
-    // Points
-    g.setColour (colourUsed.brighter (0.3f));
-    for (auto pt : { juce::Point<float> (r.getX() + wa * sx, yOf (1.0f)), juce::Point<float> (r.getX() + (wa + wd) * sx, yOf (sus)) })
-        g.drawEllipse (pt.x - 3.0f, pt.y - 3.0f, 6.0f, 6.0f, 1.4f);
+    // Points (draggable)
+    points[0] = { r.getX() + wa * sx, yOf (1.0f) };
+    points[1] = { r.getX() + (wa + wd) * sx, yOf (sus) };
+    points[2] = { r.getRight(), r.getBottom() };
+    for (int i = 0; i < 3; ++i)
+    {
+        const auto pt = points[i];
+        const bool hot = i == hoverPoint || i == dragPoint;
+        const float rad = hot ? 4.5f : 3.0f;
+        g.setColour (hot ? colourUsed.brighter (0.5f) : colourUsed.brighter (0.3f));
+        if (hot)
+            g.fillEllipse (pt.x - rad, pt.y - rad, rad * 2.0f, rad * 2.0f);
+        else
+            g.drawEllipse (pt.x - rad, pt.y - rad, rad * 2.0f, rad * 2.0f, 1.4f);
+    }
 }
 
 // ===========================================================================

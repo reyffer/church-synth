@@ -236,7 +236,19 @@ public:
         browser.onClose = [this] { showBrowser (false); };
         strip.onSourceClicked = [this] (int s) { tabs.showTabForSource (s); };
         footer.onRoutes = [this] { showRoutes(); };
+        addMouseListener (this, true); // see every click (to leave mod-edit mode)
         setSize (kW, kH);
+    }
+
+    // Clicking anywhere except a knob or a source tile leaves mod-edit mode.
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (ctx.selectedSource < 0)
+            return;
+        for (auto* c = e.eventComponent; c != nullptr && c != this; c = c->getParentComponent())
+            if (dynamic_cast<ui::Knob*> (c) != nullptr || c == &strip)
+                return;
+        ctx.clearSource();
     }
 
     void resized() override
@@ -398,7 +410,7 @@ bool ChurchSynthEditor::keyPressed (const juce::KeyPress& k)
     }
     if (k == juce::KeyPress::escapeKey && ctx.selectedSource >= 0)
     {
-        ctx.selectSource (ctx.selectedSource); // toggles off
+        ctx.clearSource();
         return true;
     }
     return false;
@@ -413,7 +425,12 @@ void ChurchSynthEditor::showView (int view, int modTab, int engineTab)
     if (modTab >= 0)
         root->tabs.showTab (modTab);
     if (engineTab >= 0)
-        root->synth.showEngineTab (engineTab);
+    {
+        if (view == 1)
+            root->fx.selectBus (engineTab); // FX page: the bus
+        else
+            root->synth.showEngineTab (engineTab);
+    }
     root->refreshAll();
     for (int i = 0; i < 8; ++i)
         root->tick (true);

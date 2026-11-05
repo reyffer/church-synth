@@ -1483,8 +1483,111 @@ static void testSeqRateChangeAndOverlap()
     CHECK (depth == 0 && maxDepth == 1, "same-pitch overlaps never stack");
 }
 
+
+// --- Feedback round 1 -----------------------------------------------------
+
+// FX power off: dry signal (no reverb tail); on again: effects come back.
+static void testFxPowerSwitch()
+{
+    FxRig rig;
+    auto& s = *rig.core;
+    rig.setSlot (0, fx::FxReverb);
+    s.params.fx.slot[0].p[7] = 1.0f; // fully wet
+    s.params.ampEnv.release = 0.01f;
+    auto tail = [&] {
+        s.noteOn (60, 1.0f);
+        renderStats (s, 12000);
+        s.noteOff (60);
+        renderStats (s, 4800);
+        return renderStats (s, 9600).rms;
+    };
+    const float onTail = tail();
+    s.params.fx.on = false;
+    renderStats (s, 48000); // let the crossfade finish
+    const float offTail = tail();
+    CHECK (onTail > 1.0e-3f, "fx on: reverb tail");
+    CHECK (offTail < 1.0e-5f, "fx off: dry, no tail");
+    const auto st = renderStats (s, 4800);
+    CHECK (st.finite, "fx off renders");
+}
+
+// The output never goes over 0 dBFS, even with a hot patch and full master volume.
+static void testOutputLimiter()
+{
+    auto sPtr = std::make_unique<SynthCore>();
+    SynthCore& s = *sPtr;
+    s.setSampleRate (48000.0f);
+    s.params = patches::supersaw();
+    s.params.masterVolume = 1.0f;
+    for (int n : { 36, 48, 55, 60, 64, 67, 71, 74, 79, 84 })
+        s.noteOn (n, 1.0f);
+    const auto st = renderStats (s, 48000);
+    CHECK (st.finite, "limiter: finite");
+    CHECK (st.peak <= 1.0f, "limiter: peak at most 0 dBFS");
+    CHECK (st.rms > 0.1f, "limiter: still loud");
+}
+
+// Unison doesn't drop the level below a single voice (feedback: it used to).
+static void testUnisonKeepsLevel()
+{
+    auto rmsDb = [] (bool uni, int voices, int mode) {
+        auto sPtr = std::make_unique<SynthCore>();
+        SynthCore& s = *sPtr;
+        s.setSampleRate (48000.0f);
+        s.params.masterVolume = 0.25f; // stay below the limiter
+        auto& e = s.params.engine[0];
+        e.unisonOn = uni;
+        e.unisonMode = mode;
+        e.unisonVoices = voices;
+        s.noteOn (48, 1.0f);
+        renderStats (s, 4800);
+        std::vector<float> l (128), r (128);
+        double sum = 0.0;
+        for (int i = 0; i < 48000; i += 128)
+        {
+            s.render (l.data(), r.data(), 128);
+            for (int k = 0; k < 128; ++k)
+                sum += 0.5 * ((double) l[(size_t) k] * l[(size_t) k] + (double) r[(size_t) k] * r[(size_t) k]);
+        }
+        return (float) (10.0 * std::log10 (sum / 48000.0)); // both channels
+    };
+    const float single = rmsDb (false, 1, UnisonClassic);
+    // (detuned voices partly add up in phase on low notes, so allow a little extra)
+    for (int v = 2; v <= kMaxUnison; ++v)
+    {
+        const float d = rmsDb (true, v, UnisonClassic) - single;
+        CHECK (d > -1.0f && d < 3.0f, "classic unison keeps the level");
+    }
+    const float d = rmsDb (true, 4, UnisonSuper) - single;
+    CHECK (d > -1.0f && d < 3.0f, "super unison keeps the level");
+}
+
+// Vintage Chorus: wide (lots of side signal) at the default settings.
+static void testVintageChorusIsWide()
+{
+    FxRig rig;
+    auto& s = *rig.core;
+    rig.setSlot (0, fx::FxVintageChorus);
+    s.params.engine[0].stereo = 0.0f;
+    s.noteOn (48, 1.0f);
+    std::vector<float> l (96000), r (96000);
+    for (int i = 0; i < 96000; i += 128)
+        s.render (l.data() + i, r.data() + i, 128);
+    double mid = 0, side = 0;
+    for (size_t i = 24000; i < l.size(); ++i)
+    {
+        mid += 0.25 * (l[i] + r[i]) * (l[i] + r[i]);
+        side += 0.25 * (l[i] - r[i]) * (l[i] - r[i]);
+    }
+    CHECK (10.0 * std::log10 (side / mid) > -3.0, "vintage chorus: side within 3 dB of mid");
+}
+
 int main()
 {
+    testFxPowerSwitch();
+    testOutputLimiter();
+    testUnisonKeepsLevel();
+    testVintageChorusIsWide();
     testArpOrdersAndTiming();
     testSeqSwingAndPitch();
     testSeqStepsProbabilityAndPolymetry();

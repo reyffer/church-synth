@@ -10,7 +10,7 @@
 //   Surgeon      submode 0 LP / 1 HP / 2 Notch / 3 BP (~60 dB/oct); a = spread (Notch/BP width)
 //   LoFi         cutoff = sample-rate frequency; a = jitter; submode 0 none / 1 pre / 2 post / 3 pre+post filter;
 //                b = pre-filter offset; c = post-filter offset
-//   Comb         submode 0 LP / 1 HP / 2 BP / 3 Feed-forward; cutoff = pitch; reso = gain; a = damping; b = all-pass
+//   Comb         submode 0 LP / 1 HP / 2 BP / 3 Feed-forward; cutoff = pitch (30 Hz..5 kHz); reso = gain (feedback 0.4..0.985); a = damping; b = all-pass
 //   Drive        submode 0 Diode / 1 Overdrive / 2 Soft clip / 3 Tape / 4 Transistor; drive = amount in the loop
 //   Allpass      submode 0 Subtle / 1 Medium / 2 Hard; reso = bandwidth; a = dry level; b = feedback (-/+); drive = shaper
 //   Ladder       24 dB transistor-ladder style; drive
@@ -251,7 +251,8 @@ private:
             }
             case FilterComb:
             {
-                combDelay = std::clamp (sampleRate / std::max (cutoff * m, 30.0f), 2.0f, (float) kCombSize - 4.0f);
+                // Pitch range 30 Hz .. 5 kHz (higher combs just sound like a slight tone change).
+                combDelay = std::clamp (sampleRate / std::clamp (cutoff * m, 30.0f, 5000.0f), 2.0f, (float) kCombSize - 4.0f);
                 op[0].set (filt::prewarp (20000.0f * std::pow (0.01f, a), sampleRate)); // damping low-pass
                 op[1].set (filt::prewarp (40.0f, sampleRate));                         // HP mode / DC guard
                 op[2].set (filt::prewarp (200.0f * std::pow (60.0f, b), sampleRate));   // all-pass in the loop
@@ -458,7 +459,8 @@ private:
 
     void combProcess (float& l, float& r) noexcept
     {
-        const float gain = std::clamp (reso, 0.0f, 1.0f) * 0.985f;
+        // Gain 0 still gives a clear comb (feedback 0.4); full gain rings for a long time.
+        const float gain = (0.4f + 0.6f * std::clamp (reso, 0.0f, 1.0f)) * 0.985f;
         const float d = combDelay;
         float* io[2] = { &l, &r };
         for (int ch = 0; ch < 2; ++ch)

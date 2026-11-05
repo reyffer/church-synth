@@ -30,7 +30,9 @@ Reference: Arturia Pigments 7.0.1 (manual + screenshots in this folder). We take
                      └─────────────┬─────────────┘
                      Aux bus (3 slots, send/return, pre|post A/B)
                                    │
-                              Master out
+                     FX power (whole section on/off, 20 ms crossfade)
+                                   │
+                    Master volume (+6 dB output stage) ─► peak limiter (−1 dBFS) ─► out
 ```
 
 Everything up to and including the amp runs **per voice**. FX run **once per instance**.
@@ -110,6 +112,10 @@ Two identical slots. Each has: type menu (Digital / Analog-modelled groups) with
 
 Analog types accept **audio-rate FM** from the engines' modulators or outputs.
 
+In the filter Type menu each model carries a one-line description of its character, so the classic types are easy to find: **Ladder** is the fat 24 dB mono-synth ladder (Mini-style), **Sallen-Key** the biting 12 dB patchable-mono-synth filter (MS-style), **OTA 4-Pole** the smooth 24 dB 80s polysynth filter (Jupiter-style). We keep our own names in the UI.
+
+Filter **Volume** goes from −inf to +12 dB (default 0 dB) to make up the level lost to filtering. Picking **Comb** tunes it to the keys (cutoff C4, key tracking 100 %); Comb always has some feedback, so the comb peaks show even at Resonance 0.
+
 ### 4.4 Model controls (as built)
 | Model | Model Mode | Control A | Control B | Control C |
 |---|---|---|---|---|
@@ -179,6 +185,7 @@ Hold (acts like sustain, also latches seq/arp), Transpose (octave, fine; fine is
 ### 6.1 Structure
 - **FX A** and **FX B** insert buses, **3 slots each**. Routing **A>B, B>A, A//B**, bus volumes A and B.
 - **Aux bus**, 3 slots, Send / Return, **pre or post** A/B.
+- **FX power** (`fx_on`, top bar beside FX): the whole section on/off; off = the dry voices, no effect processed (20 ms crossfade, no clicks).
 - Every slot: effect type menu, on/off, per-effect presets (factory + user save/delete), drag to swap, copy to another slot. Bus on/off.
 - All time-based parameters sync to host tempo (straight / triplet / dotted).
 
@@ -222,15 +229,17 @@ Every slot has On, Effect type, Sync and 12 generic controls (`fx_<slot>_p1..p12
 | Distortion | Type (Soft Clip, Hard Clip, Tube, Tape, Overdrive, Fuzz, Crunch, Diode, Sine Fold, Triangle Fold, Half Rectify, Full Rectify, Asymmetric, Bit Shape, Saturate, Destroy), Drive, Auto Gain, Output, Filter (off/pre/post), Filter Type (LP/HP/BP), Cutoff, Resonance, Slope (12/24/36), Dark, Dry/Wet. 2× oversampled |
 | Bitcrusher | Bit Depth, Downsample, Jitter, Low Cut, High Cut, Dry/Wet |
 | Erode | Mod Type (sine/tri/saw/square/noise), Frequency, Amount, Noise Blend, Band Freq, Bandwidth, Spread, Drive, Dry/Wet |
-| Super Unison | Voices (2–8), Detune, Drift, Width, Low Cut, High Cut, Dry/Wet |
+| Super Unison | Voices (2–8), Detune (up to ±100 cents, curved), Drift, Width (voices alternate sides), Low Cut, High Cut, Dry/Wet |
 | Chorus | Delay, Depth, Rate†, Feedback, Voices (1–4), Shape (sine/square), Stereo, Dry/Wet |
-| Vintage Chorus | Mode (I / II / I+II), Rate, Depth, Phase, Dry/Wet |
+| Vintage Chorus | Mode (I / II / I+II), Rate, Depth, Phase, Dry/Wet, Width (0 = a chorus line per side, 1 = the classic sum/difference outputs: very wide in stereo, folds back to dry in mono; fades out from 50 % to 100 % wet) |
 | Flanger | Delay, Depth, Rate†, Feedback (negative below centre), Low Cut, High Cut, Stereo, Shape (sine/tri), Dry/Wet |
 | Vintage Flanger | Rate†, Delay, Feedback, Depth, Wide, Mono Input, Dry/Wet |
 | Phaser | Frequency, Feedback, LFO Wave (6), Depth, Rate†, Poles (2–12), Stereo, Dry/Wet |
 | Panner | Amount, Rate†, Invert, Mono Bass, Bass Cutoff, Natural Law, Shape (sine/tri/square-ish) |
 
-Bus controls: `fx_routing` (A>B, B>A, A//B), `fx_a_on`, `fx_b_on`, `fx_aux_on`, `fx_a_vol`, `fx_b_vol` (0–150 %), `fx_aux_send`, `fx_aux_return`, `fx_aux_pre`. Every slot control, bus volume and the aux send/return are modulation destinations (evaluated once per block, from global sources only: per-voice sources like Env 2 use the newest voice).
+In the editor, controls that are really choices or switches (types, modes, waves, poles, voices, Ping-Pong, Auto Gain, Dark...) are menus or on/off pills instead of knobs. Param EQ has a response curve with draggable band points (drag = frequency + gain, mouse wheel = Peak Q), with smaller knobs below.
+
+Bus controls: `fx_on`, `fx_routing` (A>B, B>A, A//B), `fx_a_on`, `fx_b_on`, `fx_aux_on`, `fx_a_vol`, `fx_b_vol` (0–150 %), `fx_aux_send`, `fx_aux_return`, `fx_aux_pre`. Every slot control, bus volume and the aux send/return are modulation destinations (evaluated once per block, from global sources only: per-voice sources like Env 2 use the newest voice).
 
 **Decision:** all effects stay except the Vocoder. It was dropped together with external audio input, and without a mic or track input it has little to work with.
 
@@ -250,7 +259,7 @@ Bus controls: `fx_routing` (A>B, B>A, A//B), `fx_a_on`, `fx_b_on`, `fx_aux_on`, 
 ### 7.1 As built (Milestone 6)
 - **Host parameters** (automatable, saved with the patch): `seq_on`, `seq_mode` (Arp / Seq), `seq_rate` (the shared sync-division list, default 1/16), `seq_swing` (50–75 %), `seq_direction` (Forward, Backward, Ping-Pong, Random), `seq_length` (1–16), `seq_polymetry`, `seq_reset` (realign after N steps, 0 = off), `seq_arp_order` (As Played, Up, Down, Up & Down Incl., Up & Down Excl., Random), `seq_arp_octaves` (1–4), `seq_vel_blend` (played ↔ step velocity), `seq_transpose` (±24 st), `seq_scale`, `seq_snap`, `seq_autoregen` (Off, 1/16 bar … 8 bars), `seq_bpm` (tempo used only when the host gives none, e.g. standalone; also drives synced LFOs/FX there), `seq_lock` (used by the preset browser in M7). Mod destinations: Seq Transpose, Seq Swing, Seq Velocity Blend.
 - **Pattern** (saved in the plugin state as a `SEQ` child, not as host parameters): 16 columns × 6 tracks — Steps (on/off + probability), Pitch (0–12 st above the played key), Velocity, Octave (±2), Gate (5–400 % of a step), Slide (off, or a glide of 20–500 ms). Per track: on/off, length (with Polymetry), rate divider (/1, /2, /3, /4, /6, /8, /16), Random amount, rotate ◀ ▶. Per column: Lock (keeps its random values on Regen). A Custom scale has 12 per-note weights.
-- **Random** is derived from a seed, so a pattern always replays the same way. Regen = a new seed; Auto Regen moves the seed at each period; Apply random bakes what you hear into the steps; Clear random zeroes the amounts. Steps random flips some steps on/off; Pitch random picks notes by the scale weights (generative scales favour chord tones); Velocity/Octave/Gate random offset the value; Slide random toggles slides.
+- **Random** is derived from a seed, so a pattern always replays the same way. Regen = a new seed (if every Random amount is 0, Regen first sets Steps 25 %, Velocity 30 %, Octave 25 %, Gate 20 %, and Pitch 40 % in Seq mode, so it always makes a new variation); Auto Regen moves the seed at each period; Apply random bakes what you hear into the steps; Clear random zeroes the amounts. Steps random flips some steps on/off; Pitch random picks notes by the scale weights (generative scales favour chord tones); Velocity/Octave/Gate random offset the value; Slide random toggles slides.
 - **Scales:** Chromatic, Major, Natural/Harmonic/Melodic Minor, Dorian, Phrygian, Lydian, Mixolydian, Locrian, Major/Minor Pentatonic, Blues, Fifth, Major (Chord Tones), Minor (Chord Tones), Root & Fifth Heavy, Custom. Order is permanent (append only).
 - **Seq mode** plays every held key at each step (a held chord becomes a rhythmic chord pattern), transposed by Pitch/Octave/Transpose. **Arp mode** ignores Pitch; Octave adds to the arp note. Chord arp: when an engine is in Unison Chord mode the arp spreads that chord and those voices play single notes.
 - **Timing:** sample-accurate. Host playing → steps follow the song position (bar-aligned, loop jumps followed); a key pressed up to a quarter step late still plays that step at once. Host stopped → the pattern starts the moment the first key goes down. Rate changes keep the beat position.
@@ -269,7 +278,10 @@ Bus controls: `fx_routing` (A>B, B>A, A//B), `fx_a_on`, `fx_b_on`, `fx_aux_on`, 
 
 ### 8.1 As built (Milestone 7)
 - **Editor:** top bar (menu, wordmark, preset bar with browser / favourite / save / previous-next, SYNTH · FX · SEQ, Seq power, master volume + output meter), Synth page (Engine 1 / Engine 2 / Utility tabs, two filter panels with live response curves computed from the real filter code and per-model control names, routing / amp column), FX page (insert routing and bus levels, bus boxes with drag-to-swap and right-click copy, three slot editors with per-effect presets), Seq page (settings column with pattern browser, track grid with per-track random / divider / length / rotate, Shift-drag to scale a lane), the 24-tile mod strip with live traces, mod tabs (Keyboard curves + Mod Quantize keyboards, Envelopes, LFO, Functions with a drawing editor, Random, Combinate) and Macros with editable names, footer (Mod routes list, Play Mode panel, undo / redo / history, CPU and voices). Drawn at 1280×800, resizable with a fixed aspect ratio (60–200 %), size remembered. Font: Inter (OFL). Visuals refresh at 15–30 Hz and stop when the window closes.
-- **Modulation editing:** select a source tile, then drag knobs to set amounts (double-click removes); or drag a tile onto a knob. Rings show every route in the source colours.
+- **Modulation editing:** select a source tile, then drag knobs to set amounts (double-click removes); or drag a tile onto a knob. Rings show every route in the source colours. A banner and a **Done** button show while a source is selected; Done, Esc, clicking the tile again or clicking anywhere that isn't a knob or the strip leaves that mode. Dropping a tile onto a knob makes the route without entering it.
+- **Envelope curves:** drag the points (attack peak = attack time; decay corner = decay time and sustain level; end = release). Shift = fine, double-click = default.
+- **Logo:** the church lotus (light grey) beside the CHURCH SYNTH wordmark. Analog Width knobs are only active on Square and Triangle.
+- **Levels:** a +6 dB output stage after Master Volume and a peak limiter at −1 dBFS (instant attack, 150 ms release, soft above −0.4 dBFS), so the synth is about as loud as other soft synths without clipping. Unison keeps the level of a single voice; looped noises are normalised to the same RMS. Factory presets are matched to a −4 dBFS peak for a 4-note chord and −7 dBFS for mono patches.
 - **Presets:** `.csp` (XML) in `Documents/Church Synth/Presets`; banks All / Factory / User / Favourites, 9 categories, search, Init, Save / Save As / Delete, favourites in `Favourites.txt`. 42 factory presets built in code, level-matched. Patterns (`.cspat`) and FX presets (`.csfx`) in their own folders; 10 factory patterns, 24 factory FX presets. Seq Lock keeps the pattern and Seq settings when a preset loads.
 - **Host / MIDI:** every parameter stays a host parameter (IDs are permanent, so no curated subset); Macros 1–4 are first. MIDI learn on any control (right-click), saved with the host state, not in presets.
 - **Undo:** history of up to 100 snapshots (parameter gestures, route / pattern / shape edits, preset loads), jump to any step from the History menu.
@@ -321,7 +333,8 @@ Bus controls: `fx_routing` (A>B, B>A, A//B), `fx_a_on`, `fx_b_on`, `fx_aux_on`, 
 | 2026-11-04 | Pigments layout, our own artwork, dark only. |
 | 2026-11-04 | AU + VST3 (Mac and Windows) from Milestone 1; AU is the live reference. |
 | 2026-11-04 | Milestone 1 done. Standalone opens all MIDI inputs automatically (Windows standalone didn't receive MIDI). |
-| 2026-11-04 | Milestone 7 done: Pigments-style editor, presets and browser, 42 factory presets, undo/redo/history, MIDI learn, drag-and-drop modulation, drawable functions, keyboard curve editors, Mod Quantize keyboards, FX presets / swap / copy, pattern browser and Seq Lock, Shift-drag lane scaling (§8.1). Choices made: all parameters remain host parameters (permanent IDs) instead of a curated subset; factory content is built in code so nothing needs installing; logo is a gothic arch with a cross; font Inter (OFL). Still simplified: Param EQ peaks share one Q, the Erode modulator is an internal oscillator/noise. |
+| 2026-11-05 | Feedback round 1 (Reaper, Mac AU + Windows VST3). Fixed: knobs stuck in modulation mode after clicking a source (critical); Comb filter flat (now always resonant, tuned to the keys when picked); Regen did nothing with no Random amounts; quiet output (+6 dB stage + limiter; the oscillators themselves measured correct, the difference was level); unison and sparse noises losing level; Vintage Chorus too narrow (new Width control); Super Unison too subtle. Added: FX power button, Param EQ graph, menus for discrete FX controls, draggable envelope points, filter Volume up to +12 dB, filter type descriptions (Ladder / Sallen-Key / OTA 4-Pole are the Mini / MS / Jupiter-style filters), Width knob only on Square/Triangle, church lotus logo. Factory presets re-levelled; user patches saved before this play about 6 dB louder (Master Volume brings them back). Legato and Glide stay in Play Mode; they can be MIDI-learned like any control. |
+| 2026-11-04 | Milestone 7 done: Pigments-style editor, presets and browser, 42 factory presets, undo/redo/history, MIDI learn, drag-and-drop modulation, drawable functions, keyboard curve editors, Mod Quantize keyboards, FX presets / swap / copy, pattern browser and Seq Lock, Shift-drag lane scaling (§8.1). Choices made: all parameters remain host parameters (permanent IDs) instead of a curated subset; factory content is built in code so nothing needs installing; logo was a gothic arch with a cross (replaced by the church lotus on 2026-11-05); font Inter (OFL). Still simplified: Param EQ peaks share one Q, the Erode modulator is an internal oscillator/noise. |
 | 2026-11-04 | Milestone 6 done: Seq/Arp as in §7.1. Choices made: Seq mode plays the whole held chord each step; the pattern lives in the plugin state (not as 100+ host parameters); random values come from a seed (Regen = new seed) so patterns replay exactly; added Arp Octaves (1–4) and an internal tempo for hosts without one. Interim until the UI milestone: lanes in a plain grid (no Shift-drag scaling of a track yet); pattern browser (Factory / From preset / User) and Lock behaviour come with presets in M7. |
 | 2026-11-04 | Milestone 5 done: FX A / FX B (3 slots each, A>B, B>A, A//B, bus volumes), Aux bus (3 slots, send/return, pre/post), 19 effects (§6.3), tempo sync, FX controls as modulation destinations. Effects are created off the audio thread when a slot's type changes and swapped in atomically. Effect type order is permanent (append only). Interim until the UI milestone: an FX tab with generic knobs; per-effect presets, drag-to-swap and copy-to-slot move to M7; Param EQ peaks share one Q; the Erode modulator is an internal oscillator/noise (no engine or filter sources yet). |
 | 2026-11-04 | Milestone 4 done: 15 filter models (Classic, Cluster, Phaser, Formant, Surgeon, LoFi, Comb, Drive, Allpass, Ladder, Sallen-Key, OTA 4-Pole, SVF Morph, Multimode, Lowpass Gate), audio-rate filter FM (Engine 1, Engine 2, Utility, Noise), Sum / Split / Split Reversed output. Each filter exposes Model, Model Mode, Cutoff, Resonance, Drive and Controls A/B/C; what A/B/C do per model is listed in §4.4 (the UI milestone labels them per model). Voices now write to Main / FX A / FX B / Direct buses, summed until the FX milestone. |

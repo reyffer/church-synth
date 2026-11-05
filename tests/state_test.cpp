@@ -4,6 +4,7 @@
 #include "plugin/PluginEditor.h"
 #include "plugin/PluginProcessor.h"
 #include "plugin/PresetManager.h"
+#include "dsp/fx/Effects.h"
 
 #include <cmath>
 #include <cstdio>
@@ -30,6 +31,16 @@ static void snapshotEditor (ChurchSynthProcessor& p, const juce::File& dir)
     ed->showView (0, 5, 0); shot ("synth_comb");
     ed->showView (0, 0, 0); shot ("synth_keyboard");
     ed->showView (1, 1); shot ("fx");
+    // Param EQ graph and the distortion menus.
+    for (auto [id, t] : { std::pair<const char*, int> { "fx_b1_type", cs::fx::FxParamEq }, { "fx_b2_type", cs::fx::FxDistortion }, { "fx_b3_type", cs::fx::FxPhaser } })
+        if (auto* prm = p.apvts.getParameter (id))
+            prm->setValueNotifyingHost (prm->convertTo0to1 ((float) t));
+    p.syncEffects();
+    for (auto [id, v] : { std::pair<const char*, float> { "fx_b1_p4", 0.8f }, { "fx_b1_p10", 0.25f }, { "fx_b2_p1", 0.3f } })
+        if (auto* prm = p.apvts.getParameter (id))
+            prm->setValueNotifyingHost (v);
+    ed->showView (1, 1, 1);
+    shot ("fx_eq_dist");
     ed->showView (2, 1); shot ("seq");
     ed->showView (3); shot ("browser");
 }
@@ -317,7 +328,8 @@ int main (int argc, char** argv)
         auto pPtr = std::make_unique<ChurchSynthProcessor>();
         auto& p = *pPtr;
         p.prepareToPlay (48000.0, 512);
-        const bool report = argc > 1 && juce::String (argv[1]) == "--preset-report";
+        const bool levels = argc > 1 && juce::String (argv[1]) == "--level-report";
+        const bool report = levels || (argc > 1 && juce::String (argv[1]) == "--preset-report");
         const auto all = p.presets().all();
         for (const auto& info : all)
         {
@@ -328,6 +340,11 @@ int main (int argc, char** argv)
             p.presets().load (info);
             p.syncEffects();
             p.prepareToPlay (48000.0, 512); // fresh voices / effects for each preset
+            // --level-report: play 12 dB down so the output limiter stays out of the way,
+            // and print the true peak and the master volume that would hit the target.
+            const float masterVol = p.apvts.getRawParameterValue ("master_vol")->load();
+            if (levels)
+                p.apvts.getParameter ("master_vol")->setValueNotifyingHost (masterVol * 0.25f);
             if (p.getRoutes().count != wantRoutes)
             {
                 std::printf ("FAIL: preset %s lost routes (%d of %d)\n", info.name.toRawUTF8(), p.getRoutes().count, wantRoutes);
@@ -360,7 +377,14 @@ int main (int argc, char** argv)
             }
             const double rmsDb = 10.0 * std::log10 (sum2 / (blocks * 512.0 * 2.0) + 1.0e-12);
             const double peakDb = 20.0 * std::log10 (peak + 1.0e-9);
-            if (report)
+            if (levels)
+            {
+                const bool mono = p.apvts.getRawParameterValue ("voicing")->load() < 2.0f; // Mono / Mono Legato
+                const double truePeak = peakDb + 12.0, target = mono ? -7.0 : -4.0;
+                std::printf ("LEVEL|%s|%d|%.4f|%.2f|%.4f\n", info.name.toRawUTF8(), (int) mono, masterVol, truePeak,
+                             masterVol * std::pow (10.0, (target - truePeak) / 20.0));
+            }
+            else if (report)
                 std::printf ("%-24s %-14s peak %6.1f dBFS  rms %6.1f dB\n", info.name.toRawUTF8(), info.category.toRawUTF8(), peakDb, rmsDb);
             if (! finite || peak > 1.0f || rmsDb < -50.0)
             {

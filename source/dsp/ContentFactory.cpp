@@ -576,8 +576,15 @@ std::unique_ptr<NoiseSample> finish (const char* name, Buf l, Buf r, bool oneSho
         sum2 += l[i] * l[i];
     }
     const double rms = std::sqrt (sum2 / (double) l.size());
-    double gain = oneShot ? 0.9 / std::max (peak, 1.0e-9) : 0.15 / std::max (rms, 1.0e-9);
-    gain = std::min (gain, 0.98 / std::max (peak, 1.0e-9));
+    // Loops: same loudness for every noise (RMS 0.25). Sparse ones (crackle,
+    // dust) would need huge peaks for that, so their peaks may go up to 4x and
+    // are then softly rounded above 1 (max ~2.5). One-shots: peak 0.9.
+    double gain = oneShot ? 0.9 / std::max (peak, 1.0e-9) : 0.25 / std::max (rms, 1.0e-9);
+    gain = std::min (gain, (oneShot ? 0.98 : 4.0) / std::max (peak, 1.0e-9));
+    auto shape = [] (double x) {
+        const double a = std::abs (x);
+        return a <= 1.0 ? x : std::copysign (1.0 + 1.5 * (1.0 - std::exp (-(a - 1.0) / 1.5)), x);
+    };
 
     auto ns = std::make_unique<NoiseSample>();
     ns->name = name;
@@ -587,8 +594,8 @@ std::unique_ptr<NoiseSample> finish (const char* name, Buf l, Buf r, bool oneSho
     ns->right.resize (l.size());
     for (size_t i = 0; i < l.size(); ++i)
     {
-        ns->left[i] = (float) (l[i] * gain);
-        ns->right[i] = (float) (r[i] * gain);
+        ns->left[i] = (float) shape (l[i] * gain);
+        ns->right[i] = (float) shape (r[i] * gain);
     }
     return ns;
 }

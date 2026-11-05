@@ -89,7 +89,8 @@ if(CS_BUILD_PLUGIN)
     # Embedded font (Inter, SIL Open Font License: resources/fonts/OFL.txt).
     juce_add_binary_data(cs_binary_data SOURCES
         resources/fonts/Inter-400.ttf
-        resources/fonts/Inter-600.ttf)
+        resources/fonts/Inter-600.ttf
+        resources/images/lotus.png)
     set_target_properties(cs_binary_data PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
     target_sources(ChurchSynth PRIVATE ${CS_PLUGIN_SOURCES})

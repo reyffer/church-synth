@@ -354,10 +354,24 @@ public:
         regen.text = "REGEN";
         apply.text = "apply";
         clear.setTooltip ("Clear random: all Random amounts to 0, unlock every step");
-        regen.setTooltip ("New random values (locked steps keep theirs)");
+        regen.setTooltip ("New random values (locked steps keep theirs). With no Random amounts set, Regen sets some first");
         apply.setTooltip ("Make the random values you hear the pattern itself");
         clear.onClick = [this] { cs::seqClearRandom (owner.pat); owner.commit ("Seq clear random"); };
         regen.onClick = [this] {
+            // With no Random amounts there is nothing to regenerate: start from
+            // sensible amounts so every press gives a new variation.
+            bool anyRandom = false;
+            for (const auto& t : owner.pat.tracks)
+                anyRandom = anyRandom || t.random > 0.0f;
+            if (! anyRandom)
+            {
+                owner.pat.tracks[cs::TrackSteps].random = 0.25f;
+                owner.pat.tracks[cs::TrackVelocity].random = 0.3f;
+                owner.pat.tracks[cs::TrackOctave].random = 0.25f;
+                owner.pat.tracks[cs::TrackGate].random = 0.2f;
+                if (ctx.intValue ("seq_mode") == cs::SeqModeSeq)
+                    owner.pat.tracks[cs::TrackPitch].random = 0.4f;
+            }
             owner.pat.seed = cs::seqNextSeed (ctx.proc.getSeq().uiSeed.load());
             owner.commit ("Seq regen");
         };
