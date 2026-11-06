@@ -48,6 +48,9 @@ juce::String pack10Notes (const juce::String& presetName);
 const std::vector<FactoryPreset>& pack11Presets();
 juce::StringArray pack11Tags (const juce::String& presetName);
 juce::String pack11Notes (const juce::String& presetName);
+const std::vector<FactoryPreset>& pack12Presets();
+juce::StringArray pack12Tags (const juce::String& presetName);
+juce::String pack12Notes (const juce::String& presetName);
 
 inline const std::vector<PresetPack>& presetPacks()
 {
@@ -63,6 +66,7 @@ inline const std::vector<PresetPack>& presetPacks()
         { "Pack 9 - Vintage Poly", &pack9Presets, &pack9Tags, &pack9Notes },
         { "Pack 10 - Twin Layer", &pack10Presets, &pack10Tags, &pack10Notes },
         { "Pack 11 - Synthwave", &pack11Presets, &pack11Tags, &pack11Notes },
+        { "Pack 12 - EDM", &pack12Presets, &pack12Tags, &pack12Notes },
     };
     return packs;
 }
