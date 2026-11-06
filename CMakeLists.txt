@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 
 set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
 
-project(ChurchSynth VERSION 0.2.0 LANGUAGES C CXX)
+project(ChurchSynth VERSION 0.2.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -120,7 +120,7 @@ if(CS_BUILD_PLUGIN)
     if(CS_BUILD_TESTS)
         # Plugin-level state test: a console app compiling the processor sources directly.
         juce_add_console_app(cs_state_test PRODUCT_NAME "cs_state_test")
-        target_sources(cs_state_test PRIVATE tests/state_test.cpp packs/Pack1.cpp ${CS_PLUGIN_SOURCES})
+        target_sources(cs_state_test PRIVATE tests/state_test.cpp packs/Pack1.cpp packs/Pack1Notes.cpp packs/Pack2Worship.cpp packs/Pack2Notes.cpp ${CS_PLUGIN_SOURCES})
         target_include_directories(cs_state_test PRIVATE source .)
         target_compile_definitions(cs_state_test PRIVATE
             JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0

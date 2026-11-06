@@ -52,19 +52,19 @@ static void snapshotEditor (ChurchSynthProcessor& p, const juce::File& dir)
 
 
 // Plays `notes` for 4 s (then 2 s of release) and returns the output peak.
-static float playPeak (ChurchSynthProcessor& p, std::initializer_list<int> notes, bool* finite = nullptr)
+static float playPeak (ChurchSynthProcessor& p, std::initializer_list<int> notes, bool* finite = nullptr, double holdSeconds = 4.0)
 {
     juce::AudioBuffer<float> buf (2, 512);
     float peak = 0.0f;
     bool ok = true;
-    const int blocks = (int) (48000.0 * 6.0 / 512.0);
+    const int blocks = (int) (48000.0 * (holdSeconds + 2.0) / 512.0);
     for (int blk = 0; blk < blocks; ++blk)
     {
         juce::MidiBuffer midi;
         if (blk == 2)
             for (int n : notes)
                 midi.addEvent (juce::MidiMessage::noteOn (1, n, (juce::uint8) 100), 0);
-        if (blk == (int) (48000.0 * 4.0 / 512.0))
+        if (blk == (int) (48000.0 * holdSeconds / 512.0))
             for (int n : notes)
                 midi.addEvent (juce::MidiMessage::noteOff (1, n), 0);
         buf.clear();
@@ -111,15 +111,21 @@ static int exportPacks (const juce::File& dir)
                 p.syncEffects();
                 p.prepareToPlay (48000.0, 512);
                 const bool mono = p.apvts.getRawParameterValue ("voicing")->load() < 2.0f;
-                const bool bass = juce::String (fp.category) == "Bass";
+                const juce::String cat (fp.category);
+                const bool bass = cat == "Bass";
+                // Drones, swells and risers take longer to reach full level.
+                const double hold = (cat == "Texture" || cat == "FX") ? 10.0 : 4.0;
                 bool finite = true;
-                const float pk = mono ? playPeak (p, { bass ? 36 : 60 }, &finite) : playPeak (p, { 48, 60, 64, 67 }, &finite);
+                // Textures (drones, atmospheres) are played with one held note, like mono sounds.
+                const bool single = mono || cat == "Texture";
+                const float pk = single ? playPeak (p, { bass ? 36 : (mono ? 60 : 48) }, &finite, hold)
+                                        : playPeak (p, { 48, 60, 64, 67 }, &finite, hold);
                 if (! finite)
                 {
                     std::printf ("FAIL: %s is not finite\n", fp.name);
                     ++failures;
                 }
-                return std::make_pair (pk, mono);
+                return std::make_pair (pk, single);
             };
             // Well below the limiter; three runs (random phases, free-running modulators) and keep the loudest.
             auto [quiet, mono] = measure (0.2f);
@@ -149,7 +155,13 @@ static int exportPacks (const juce::File& dir)
                 std::printf ("FAIL: %s has no tags\n", fp.name);
                 ++failures;
             }
-            if (! p.presets().writePresetFile (file, fp.name, fp.category, "Church Synth", fp.description, tags))
+            const auto notes = pack.notes (fp.name);
+            if (notes.length() < 80)
+            {
+                std::printf ("FAIL: %s has no notes\n", fp.name);
+                ++failures;
+            }
+            if (! p.presets().writePresetFile (file, fp.name, fp.category, "Church Synth", fp.description, tags, notes))
             {
                 std::printf ("FAIL: couldn't write %s\n", file.getFullPathName().toRawUTF8());
                 ++failures;
@@ -220,6 +232,15 @@ static int renderPack (const juce::File& packDir, const juce::File& wavDir)
                 chord (0.05, 3.0, { 48, 55, 60, 64 }, 100);
                 chord (3.0, 6.0, { 45, 52, 57, 60 }, 100);
                 len = 8.0;
+            }
+            else if (cat == "Texture" || cat == "FX")
+            {
+                // Held long enough for drones to settle and swells/risers to finish.
+                if (cat == "Texture")
+                    chord (0.05, 10.0, { juce::String (fp.name).contains ("Sub") ? 36 : 48 }, 100);
+                else
+                    chord (0.05, 9.0, { 48, 55, 60, 64 }, 100);
+                len = 13.0;
             }
             else if (mono)
             {
@@ -498,7 +519,15 @@ int main (int argc, char** argv)
                 ++failures;
             }
         for (const auto& pack : presetPacks())
+        {
             check (pack.presets());
+            for (const auto& fp : pack.presets())
+                if (pack.notes (fp.name).length() < 80 || pack.tags (fp.name).isEmpty())
+                {
+                    std::printf ("FAIL: pack preset %s has no notes or tags\n", fp.name);
+                    ++failures;
+                }
+        }
     }
 
     // Every parameter has a help-bar explanation.

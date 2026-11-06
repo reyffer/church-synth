@@ -1,12 +1,13 @@
 Church Synth - Preset Pack 1: Keys, Strings and Synths
-75 presets, tagged. Needs the Church Synth build from 5 Nov 2026 (evening) or later:
-the organs use the new Rotary effect.
+75 presets, tagged, each with "How it's built" notes (shown under the browser).
+Needs Church Synth v0.2 or later: the organs use the Rotary effect.
 
 INSTALL
 Copy this whole folder ("Pack 1 - Keys, Strings and Synths") into:
   Mac:     Documents/Church Synth/Presets
   Windows: Documents\Church Synth\Presets
-If you installed the first version of this pack, replace that folder with this one.
+If you installed an earlier version of this pack, replace that folder with this one
+(same names, so your tag edits and favourites are kept).
 Then press Rescan in the preset browser. The sounds are in the User bank, in their
 categories, and under their tags.
 

@@ -180,6 +180,40 @@ static void testMonoLegato()
     CHECK (s.activeVoiceCount() == 0, "mono releases");
 }
 
+// Regression: a legato note with a different velocity used to step the amp gain
+// at once (a click on mono basses). The gain is now smoothed per sample.
+static void testLegatoVelocityNoClick()
+{
+    auto sPtr = std::make_unique<SynthCore>();
+    SynthCore& s = *sPtr;
+    s.setSampleRate (48000.0f);
+    auto& p = s.params;
+    p.voicing = VoicingMonoLegato;
+    p.glide = 0.04f;
+    p.glideLegato = true;
+    p.engine[0].osc[0].wave = WaveSine;
+    p.engine[0].osc[0].volume = 0.9f;
+    p.engine[0].osc[1].volume = 0.0f;
+    p.engine[0].osc[2].volume = 0.0f;
+    p.engine[0].volume = 1.0f;
+    p.filter[0].on = false;
+    p.ampVelocity = 1.0f;
+    std::vector<float> l (48000), r (48000);
+    s.noteOn (36, 0.4f);
+    s.render (l.data(), r.data(), 9600);
+    s.noteOn (43, 1.0f); // legato, much louder
+    s.render (l.data() + 9600, r.data() + 9600, 9600);
+    auto worst = [&] (int a, int b) {
+        float m = 0.0f;
+        for (int i = a; i < b; ++i)
+            m = std::max (m, std::abs (l[(size_t) i + 1] - l[(size_t) i]));
+        return m;
+    };
+    const float steady = worst (16000, 19000);
+    const float change = worst (9400, 10400);
+    CHECK (change < steady * 1.5f, "legato velocity change is smooth"); // a step would jump ~0.5
+}
+
 static void testHeavyPatchSane()
 {
     for (auto p : { patches::pad(), patches::supersaw(), patches::worstCase() })
@@ -1857,6 +1891,7 @@ int main()
     testStealIsRespectedOnQuickRelease();
     testSustainPedal();
     testMonoLegato();
+    testLegatoVelocityNoClick();
     testHeavyPatchSane();
     if (failures == 0)
         std::printf ("All tests passed.\n");

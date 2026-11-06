@@ -219,9 +219,11 @@ void TopBar::paint (juce::Graphics& g)
         };
         word ("CHURCH", font (20.0f, true), col::gold);
         word ("SYNTH", font (20.0f, false), col::text);
-        // Version (major.minor), small and dark, so it's easy to check which build is loaded.
+        // Version (major.minor[.fix]), small and dark, so it's easy to check which build is loaded.
         const auto ver = juce::StringArray::fromTokens (JucePlugin_VersionString, ".", {});
-        const juce::String v = "v" + ver[0] + "." + (ver.size() > 1 ? ver[1] : juce::String ("0"));
+        juce::String v = "v" + ver[0] + "." + (ver.size() > 1 ? ver[1] : juce::String ("0"));
+        if (ver.size() > 2 && ver[2] != "0")
+            v << "." << ver[2]; // bug-fix builds show the third number (v0.2.1)
         g.setColour (col::textDim.withAlpha (0.55f));
         g.setFont (font (11.0f));
         const float vw = juce::GlyphArrangement::getStringWidth (font (11.0f), v);

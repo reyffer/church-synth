@@ -25,6 +25,7 @@ public:
     void setSampleRate (float sr) noexcept
     {
         sampleRate = sr;
+        ampSmooth = 1.0f - std::exp (-1.0f / (0.002f * sr)); // ~2 ms
         for (int e = 0; e < kNumEngines; ++e)
         {
             analog[e].setSampleRate (sr);
@@ -76,6 +77,7 @@ public:
         env.kill();
         env.gateOn();
         envPrev = 0.0f;
+        ampGainSnap = true;
         startMod (p, seed);
     }
 
@@ -337,6 +339,15 @@ private:
         const float fadeStep = stealing ? -1.0f / (0.003f * sampleRate) : 0.0f; // 3 ms steal fade
         const float envStep = (envNow - envPrev) / (float) n;
         float envV = envPrev;
+        // Amp Mod gain (velocity, tremolo, gates) is smoothed per sample so a legato
+        // note with a new velocity or a stepped modulator doesn't click.
+        if (ampGainSnap)
+        {
+            ampGainNow = ampGain;
+            ampGainSnap = false;
+        }
+        const float gainTarget = ampGain;
+        float gainNow = ampGainNow;
         float fPk1 = 0.0f, fPk2 = 0.0f, fPkV = 0.0f;
 
         for (int i = 0; i < n; ++i)
@@ -357,7 +368,8 @@ private:
             envV += envStep;
             if (stealing)
                 fade = std::max (0.0f, fade + fadeStep);
-            const float amp = envV * ampGain * fade;
+            gainNow += (gainTarget - gainNow) * ampSmooth;
+            const float amp = envV * gainNow * fade;
             const float gl = amp * vpL, gr = amp * vpR;
             if (split)
             {
@@ -381,6 +393,7 @@ private:
             }
         }
         envPrev = envNow;
+        ampGainNow = gainNow;
         if (needFollow)
         {
             followPeak[FollowFilter1] = fPk1;
@@ -416,7 +429,10 @@ private:
     float followPeak[FollowInputCount] {};
     bool needFollow = false;
     int vmStep[kNumRandoms] {};
-    float ampGain = 1.0f;
+    float ampGain = 1.0f;     // target Amp Mod gain for this block
+    float ampGainNow = 1.0f;  // smoothed, per sample
+    float ampSmooth = 0.01f;
+    bool ampGainSnap = true;  // a fresh note starts at its target gain
     SynthParams local;
     bool localValid = false;
 
