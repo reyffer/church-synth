@@ -117,11 +117,11 @@ Try: Macro 3 switches the rotary to Fast.)" },
 Use: tension, Good Friday, dramatic readings. It's mostly felt on a PA with subs.
 
 Try: Macro 3 (Rumble) for more noise.)" },
-        { "Air Drone", R"(Recipe: pink noise through the Comb filter. A comb filter adds a delayed copy of the sound to itself; when the delay matches a note's period, noise starts to sing at that pitch. Key Track is at 100 %, so the pitch follows the keyboard. A quiet sine adds a clear centre.
+        { "Air Drone", R"(Recipe: a sine with a soft triangle an octave up, plus pink noise, all through the Comb filter. A comb filter adds a delayed copy of the sound to itself; when the delay matches a note's period, it rings at that pitch. Key Track is at 100 %, so the breath is tuned to whatever note you hold.
 
-Listen for: a pitched wind, more breath than tone.
+Listen for: the noise doesn't hiss, it sings along with the tone.
 
-Try: Macro 3 (Ring) raises the comb's resonance: more pitch, less noise.)" },
+Try: Macro 3 (Air) for more breath around the tone.)" },
         { "Shimmer Drone", R"(Recipe: a plain sine with a triangle an octave up, fed into the shimmer reverb at a high send. The shimmer adds octaves above, so a simple tone becomes a glowing cloud.
 
 Listen for: the drone gets brighter over the first few seconds as the shimmer builds.
@@ -151,11 +151,11 @@ Try: Macro 4 (Length) makes the swell longer.)" },
 Use: the bar after a big ending, or to "drop out" the band into a quiet verse.
 
 Try: Macro 4 changes the decay time.)" },
-        { "Wind Swell", R"(Recipe: only noise (both engines off) through a bandpass filter. Env 2 sweeps the band up over 3.5 s while the volume rises; letting go fades it out over 1.5 s.
+        { "Wind Swell", R"(Recipe: unison saws and noise through a Comb filter that follows the keyboard (so the wind is tuned to the chord), then a lowpass that Env 2 opens over 3.5 s while the volume rises. Letting go fades it out over 1.5 s.
 
-Listen for: the "whoosh" comes from the filter moving, not from the noise itself.
+Listen for: the "whoosh" comes from the lowpass moving; the comb makes it a chord instead of hiss.
 
-Try: Macro 3 (Whistle) adds resonance so the wind whistles. Macro 4 makes the gust longer.)" },
+Try: Macro 3 (Wind) for more noise and less saw. Macro 4 makes the gust longer.)" },
         { "Sub Swell", R"(Recipe: a sine with a faint triangle an octave up, a 2.5 s attack and a lowpass at 400 Hz. No reverb: low frequencies in a reverb just turn into mud.
 
 Use: low notes (one at a time) under the last chorus. It needs a PA with subs; on small speakers Macro 3 makes it audible.
@@ -232,11 +232,11 @@ Use: when there's no bass player. Play the root notes with your left hand.
 
 Try: Macro 3 (Overtone) to hear it on small speakers. Macro 4 for a longer release between notes.)" },
         // ----------------------------------------------------------------- atmosphere
-        { "Prayer Atmosphere", R"(Recipe: "Wind" and "Air" noise around a very soft "Airy Pad", with a slow LFO on the filter and a big hall.
+        { "Prayer Atmosphere", R"(Recipe: two soft pads ("Airy Pad" and "Warm Pad" wavetables) with a touch of "Wind" and "Air" noise, a slow LFO on the filter and a big hall.
 
-Use: one held note during prayer, communion or a reading: it fills the silence without being music.
+Use: one held note or a simple chord during prayer, communion or a reading: it fills the silence without drawing attention.
 
-Try: Macro 3 (Wind) for more wind and less pad.)" },
+Try: Macro 3 (Wind) to bring the wind forward for a more atmospheric moment.)" },
         { "Final Chorus Stack", R"(Recipe: everything at once: a 7-voice Super saw, a "String Ensemble" layer, a sine sub on the Utility oscillator, chorus and shimmer. Velocity opens the filter a little.
 
 Listen for: it's loud and full on purpose. Save it for the last chorus and come back to a smaller pad after.

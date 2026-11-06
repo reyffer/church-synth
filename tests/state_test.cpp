@@ -84,13 +84,15 @@ static float playPeak (ChurchSynthProcessor& p, std::initializer_list<int> notes
 
 // --export-pack <dir>: writes every preset pack as .csp files, level-matched like
 // the factory set (-4 dBFS peak for a 4-note chord, -7 dBFS for a mono note).
-static int exportPacks (const juce::File& dir)
+static int exportPacks (const juce::File& dir, const juce::String& only = {})
 {
     auto pPtr = std::make_unique<ChurchSynthProcessor>();
     auto& p = *pPtr;
     int failures = 0;
     for (const auto& pack : presetPacks())
     {
+        if (only.isNotEmpty() && ! juce::String (pack.folder).containsIgnoreCase (only))
+            continue;
         const auto folder = dir.getChildFile (pack.folder);
         folder.deleteRecursively();
         folder.createDirectory();
@@ -190,7 +192,7 @@ static int exportPacks (const juce::File& dir)
 // --render-pack <exported dir> <wav dir>: one WAV per exported pack preset, with a
 // phrase that suits it (chords for keys/pads, a melody for bells and leads, a held
 // note for bass sequences). For the audition reel.
-static int renderPack (const juce::File& packDir, const juce::File& wavDir)
+static int renderPack (const juce::File& packDir, const juce::File& wavDir, const juce::String& only = {})
 {
     auto pPtr = std::make_unique<ChurchSynthProcessor>();
     auto& p = *pPtr;
@@ -199,6 +201,8 @@ static int renderPack (const juce::File& packDir, const juce::File& wavDir)
     for (const auto& pack : presetPacks())
         for (const auto& fp : pack.presets())
         {
+            if (only.isNotEmpty() && ! juce::String (pack.folder).containsIgnoreCase (only))
+                continue;
             PresetInfo info;
             info.factory = false;
             info.name = fp.name;
@@ -493,9 +497,9 @@ int main (int argc, char** argv)
     if (argc > 1 && juce::String (argv[1]) == "--stress-threads")
         return stressThreads (argc > 2 ? juce::String (argv[2]).getDoubleValue() : 10.0, argc > 3 ? juce::String (argv[3]).getIntValue() : 7);
     if (argc > 3 && juce::String (argv[1]) == "--render-pack")
-        return renderPack (juce::File (argv[2]), juce::File (argv[3]));
+        return renderPack (juce::File (argv[2]), juce::File (argv[3]), argc > 4 ? juce::String (argv[4]) : juce::String());
     if (argc > 2 && juce::String (argv[1]) == "--export-pack")
-        return exportPacks (juce::File (argv[2]));
+        return exportPacks (juce::File (argv[2]), argc > 3 ? juce::String (argv[3]) : juce::String());
 
     // Every factory and pack preset uses only known parameters, menu items and routes.
     {

@@ -420,19 +420,20 @@ const std::vector<FactoryPreset>& pack2Presets()
               macros (b, "Brightness", "Space", "Rumble", "Swell");
               b.route ("Macro 1", "f1_cutoff", 0.3f).route ("Macro 2", "fx_aux_send", 0.5f).route ("Macro 3", "u_n1_vol", 0.3f).route ("Macro 4", "env1_a", 0.35f);
           } },
-        { "Air Drone", "Texture", "Breathy noise tuned to the note by a comb filter: a pitched wind. Very soft and spacious.",
+        { "Air Drone", "Texture", "A soft, pure tone wrapped in breath that's tuned to the note. Calm and spacious.",
           [] (B& b) {
               osc (b, 0, 0, kSine, 0.8f);
-              b.set ("e1_vol", 0.15f);
-              noise (b, 0, "Pink", 0.6f, 0.0f);
-              model (b, 0, kComb, 0, 261.63f, 0.92f, 1.0f);
-              b.set ("f1_a", 0.5f).set ("f1_vol", 2.0f);
-              filter (b, 1, kLP12, 4000.0f, 0.0f, 0.3f);
+              osc (b, 0, 1, kTri, 0.25f, 12.0f, 0.04f);
+              b.set ("e1_vol", 0.5f);
+              noise (b, 0, "Pink", 0.3f, 0.0f);
+              model (b, 0, kComb, 0, 261.63f, 0.97f, 1.0f);
+              b.set ("f1_a", 0.5f).set ("f1_vol", 2.6f);
+              filter (b, 1, kLP12, 3000.0f, 0.0f, 0.3f);
               b.set ("f_routing", 0.0f);
               env (b, "env1", 2.0f, 1.0f, 1.0f, 4.0f);
               hall (b, 0.45f, 0.9f, 0.8f);
-              macros (b, "Brightness", "Space", "Ring", "Swell");
-              b.route ("Macro 1", "f2_cutoff", 0.3f).route ("Macro 2", "fx_aux_send", 0.5f).route ("Macro 3", "f1_reso", 0.15f).route ("Macro 4", "env1_a", 0.35f);
+              macros (b, "Brightness", "Space", "Air", "Swell");
+              b.route ("Macro 1", "f2_cutoff", 0.3f).route ("Macro 2", "fx_aux_send", 0.5f).route ("Macro 3", "u_n1_vol", 0.3f).route ("Macro 4", "env1_a", 0.35f);
           } },
         { "Shimmer Drone", "Texture", "Simple sine-and-triangle drone fed into a big octave shimmer. Glows above the root.",
           [] (B& b) {
@@ -520,18 +521,22 @@ const std::vector<FactoryPreset>& pack2Presets()
               macros (b, "Brightness", "Space", "Noise", "Decay");
               b.route ("Macro 1", "f1_cutoff", 0.2f).route ("Macro 2", "fx_aux_send", 0.5f).route ("Macro 3", "u_n1_vol", 0.3f).route ("Macro 4", "env1_d", 0.3f);
           } },
-        { "Wind Swell", "FX", "Filtered noise that swells up like a gust of wind, then fades when you let go.",
+        { "Wind Swell", "FX", "A pitched gust: saws and noise tuned to the chord swell up together and fade when you let go.",
           [] (B& b) {
-              b.set ("e1_on", 0.0f);
-              noise (b, 0, "White Wide", 1.0f, 0.0f);
-              filter (b, 0, kBP12, 800.0f, 0.3f, 0.0f);
-              b.set ("f1_vol", 3.0f);
+              osc (b, 0, 0, kSaw, 0.8f);
+              b.set ("e1_vol", 0.45f);
+              uni (b, 0, 0, 3, 0.12f, 0.8f);
+              noise (b, 0, "White Wide", 0.3f, 0.0f);
+              model (b, 0, kComb, 0, 261.63f, 0.95f, 1.0f);
+              b.set ("f1_a", 0.4f).set ("f1_vol", 1.5f);
+              filter (b, 1, kLP12, 400.0f, 0.2f, 0.3f);
+              b.set ("f_routing", 0.0f);
               env (b, "env2", 3.5f, 1.0f, 1.0f, 2.0f);
-              b.route ("Env 2", "f1_cutoff", 0.45f);
+              b.route ("Env 2", "f2_cutoff", 0.45f);
               env (b, "env1", 3.5f, 0.5f, 1.0f, 1.5f);
               hall (b, 0.45f, 0.85f, 0.8f);
-              macros (b, "Brightness", "Space", "Whistle", "Length");
-              b.route ("Macro 1", "f1_cutoff", 0.3f).route ("Macro 2", "fx_aux_send", 0.5f).route ("Macro 3", "f1_reso", 0.4f)
+              macros (b, "Brightness", "Space", "Wind", "Length");
+              b.route ("Macro 1", "f2_cutoff", 0.3f).route ("Macro 2", "fx_aux_send", 0.5f).route ("Macro 3", "u_n1_vol", 0.3f)
                   .route ("Macro 4", "env1_a", 0.3f).route ("Macro 4", "env2_a", 0.3f);
           } },
         { "Sub Swell", "Texture", "A deep sine swell, felt more than heard. Low notes under the last chorus. Needs subs on the PA.",
@@ -770,12 +775,13 @@ const std::vector<FactoryPreset>& pack2Presets()
               b.route ("Macro 1", "f1_cutoff", 0.3f).route ("Macro 3", "e1_o2_vol", 0.4f).route ("Macro 4", "env1_r", 0.35f);
           } },
         // ================================================================ ATMOSPHERE
-        { "Prayer Atmosphere", "Texture", "Soft wind and air around a quiet pad. Room tone for prayer, readings and communion.",
+        { "Prayer Atmosphere", "Texture", "Quiet, airy pad with a breath of wind around it. For prayer, readings and communion.",
           [] (B& b) {
-              wavetable (b, 0, "Airy Pad", 0.3f, 0.35f);
+              wavetable (b, 0, "Airy Pad", 0.3f, 0.5f);
               uni (b, 0, 0, 3, 0.1f, 0.7f);
-              noise (b, 0, "Wind", 0.35f, 0.0f);
-              noise (b, 1, "Air", 0.2f, 0.2f);
+              wavetable (b, 1, "Warm Pad", 0.4f, 0.3f);
+              noise (b, 0, "Wind", 0.12f, 0.0f);
+              noise (b, 1, "Air", 0.08f, 0.2f);
               filter (b, 0, kLP12, 2500.0f, 0.05f, 0.2f);
               env (b, "env1", 2.5f, 1.0f, 1.0f, 4.0f);
               lfo (b, 0, LfoSine, 0.05f);
