@@ -135,8 +135,16 @@ static int exportPacks (const juce::File& dir, const juce::String& only = {})
                 quiet = std::max (quiet, measure (0.2f).first);
             const double truePeakDb = 20.0 * std::log10 (quiet / 0.2 + 1.0e-9);
             const double target = mono ? -7.0 : -4.0;
-            const float vol = (float) juce::jlimit (0.05, 1.0, std::pow (10.0, (target - truePeakDb) / 20.0));
-            const float finalPeak = measure (std::round (vol * 100.0f) / 100.0f).first;
+            float vol = (float) juce::jlimit (0.05, 1.0, std::pow (10.0, (target - truePeakDb) / 20.0));
+            float finalPeak = measure (std::round (vol * 100.0f) / 100.0f).first;
+            // Random phases / free-running modulators can make one run differ a lot from the
+            // quiet runs: if the check is more than 1.5 dB off, meet halfway and measure again.
+            const double offDb = target - 20.0 * std::log10 (finalPeak + 1.0e-9);
+            if (std::abs (offDb) > 1.5 && vol < 1.0f)
+            {
+                vol = (float) juce::jlimit (0.05, 1.0, vol * std::pow (10.0, offDb / 40.0));
+                finalPeak = measure (std::round (vol * 100.0f) / 100.0f).first;
+            }
             if (p.getRoutes().count != wantRoutes)
             {
                 std::printf ("FAIL: %s lost routes (%d of %d)\n", fp.name, p.getRoutes().count, wantRoutes);
