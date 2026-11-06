@@ -163,6 +163,7 @@ void PresetManager::rescan()
         p.factory = true;
         p.factoryIndex = (int) i;
         p.tags = factoryPresetTags (p.name);
+        p.notes = factoryPresetNotes (p.name);
         list.push_back (p);
     }
     std::vector<PresetInfo> user;
@@ -177,6 +178,8 @@ void PresetManager::rescan()
             p.factory = false;
             p.file = f;
             p.tags = parseTags (xml->getStringAttribute ("tags"));
+            if (auto* n = xml->getChildByName ("NOTES"))
+                p.notes = n->getAllSubText().trim();
             user.push_back (p);
         }
     std::sort (user.begin(), user.end(), [] (const PresetInfo& a, const PresetInfo& b) { return a.name.compareNatural (b.name) < 0; });
@@ -186,6 +189,8 @@ void PresetManager::rescan()
     for (auto& p : list)
         if (auto it = tagEdits.find (p.key()); it != tagEdits.end())
             p.tags = it->second;
+        else
+            p.tags = applyTagRules (p.tags);
     scanned = true;
 }
 
@@ -281,7 +286,7 @@ bool PresetManager::save (const juce::String& name, const juce::String& category
 
 bool PresetManager::writePresetFile (const juce::File& file, const juce::String& name, const juce::String& category,
                                      const juce::String& author, const juce::String& description,
-                                     const juce::StringArray& tags)
+                                     const juce::StringArray& tags, const juce::String& notes)
 {
     juce::XmlElement root ("ChurchSynthPreset");
     root.setAttribute ("format", kPresetFormat);
@@ -292,6 +297,8 @@ bool PresetManager::writePresetFile (const juce::File& file, const juce::String&
     root.setAttribute ("version", JucePlugin_VersionString);
     if (! tags.isEmpty())
         root.setAttribute ("tags", tags.joinIntoString (", "));
+    if (notes.isNotEmpty())
+        root.createNewChildElement ("NOTES")->addTextElement (notes);
     if (auto inner = currentAsPresetTree (name.trim(), category, author, description).createXml())
         root.addChildElement (inner.release());
     return root.writeTo (file);
@@ -370,9 +377,29 @@ juce::StringArray PresetManager::allTags()
     return t;
 }
 
+juce::StringArray PresetManager::applyTagRules (const juce::StringArray& tags) const
+{
+    juce::StringArray out;
+    for (auto t : tags)
+    {
+        for (int hop = 0; hop < 16; ++hop) // follow rename chains (A -> B -> C)
+        {
+            const auto it = tagRenames.find (t.toLowerCase());
+            if (it == tagRenames.end())
+                break;
+            t = it->second;
+        }
+        if (! tagDeletes.contains (t, true))
+            out.addIfNotAlreadyThere (t, true);
+    }
+    return out;
+}
+
 void PresetManager::setTags (const PresetInfo& p, const juce::StringArray& tags)
 {
     all();
+    for (const auto& t : tags) // using a tag again un-deletes it for future imports
+        tagDeletes.removeString (t, true);
     tagEdits[p.key()] = tags;
     for (auto& q : list)
         if (q.key() == p.key())
@@ -386,6 +413,14 @@ void PresetManager::renameTag (const juce::String& from, const juce::String& to)
     if (newName.isEmpty() || from == newName)
         return;
     all();
+    // Remember the rule (and point older rules at the new name, without loops).
+    tagRenames.erase (newName.toLowerCase());
+    for (auto& [src, dst] : tagRenames)
+        if (dst.equalsIgnoreCase (from))
+            dst = newName;
+    if (! from.equalsIgnoreCase (newName))
+        tagRenames[from.toLowerCase()] = newName;
+    tagDeletes.removeString (newName, true);
     for (auto& p : list)
         if (const int i = p.tags.indexOf (from, true); i >= 0)
         {
@@ -403,6 +438,7 @@ void PresetManager::renameTag (const juce::String& from, const juce::String& to)
 void PresetManager::deleteTag (const juce::String& tag)
 {
     all();
+    tagDeletes.addIfNotAlreadyThere (tag, true);
     for (auto& p : list)
         if (p.tags.contains (tag, true))
         {
@@ -415,9 +451,17 @@ void PresetManager::deleteTag (const juce::String& tag)
 void PresetManager::loadTagEdits()
 {
     tagEdits.clear();
+    tagRenames.clear();
+    tagDeletes.clear();
     if (auto xml = juce::XmlDocument::parse (rootFolder().getChildFile ("Preset Tags.xml")))
+    {
         for (auto* e : xml->getChildWithTagNameIterator ("PRESET"))
             tagEdits[e->getStringAttribute ("key")] = parseTags (e->getStringAttribute ("tags"));
+        for (auto* e : xml->getChildWithTagNameIterator ("RENAME"))
+            tagRenames[e->getStringAttribute ("from").toLowerCase()] = e->getStringAttribute ("to");
+        for (auto* e : xml->getChildWithTagNameIterator ("DELETED"))
+            tagDeletes.addIfNotAlreadyThere (e->getStringAttribute ("tag"), true);
+    }
 }
 
 void PresetManager::saveTagEdits() const
@@ -430,6 +474,14 @@ void PresetManager::saveTagEdits() const
         e->setAttribute ("key", key);
         e->setAttribute ("tags", tags.joinIntoString (", "));
     }
+    for (const auto& [from, to] : tagRenames)
+    {
+        auto* e = root.createNewChildElement ("RENAME");
+        e->setAttribute ("from", from);
+        e->setAttribute ("to", to);
+    }
+    for (const auto& t : tagDeletes)
+        root.createNewChildElement ("DELETED")->setAttribute ("tag", t);
     root.writeTo (rootFolder().getChildFile ("Preset Tags.xml"));
 }
 

@@ -87,6 +87,7 @@ class FxMenu final : public juce::Component, public juce::SettableTooltipClient
 public:
     FxMenu (UiContext& c, const juce::String& paramId) : ctx (c), id (paramId)
     {
+        getProperties().set ("paramId", paramId); // for the help bar
         if (auto* p = ctx.param (id))
         {
             att = std::make_unique<juce::ParameterAttachment> (*p, [this] (float v) { value = v; repaint(); });

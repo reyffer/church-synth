@@ -201,6 +201,7 @@ private:
 
 Knob::Knob (UiContext& c, const juce::String& id, const juce::String& l) : ctx (c), paramId (id), label (l)
 {
+    getProperties().set ("paramId", id); // for the help bar
     pdef = ctx.def (id);
     dest = cs::findModDest (id.toStdString());
     slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
@@ -378,6 +379,7 @@ void Knob::showContextMenu (UiContext& ctx, const juce::String& paramId, juce::C
 // ===========================================================================
 Pill::Pill (UiContext& c, const juce::String& id) : ctx (c), paramId (id)
 {
+    getProperties().set ("paramId", id); // for the help bar
     pdef = ctx.def (id);
     if (auto* p = ctx.param (id))
     {
@@ -494,6 +496,7 @@ void Pill::mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetail
 // ===========================================================================
 Toggle::Toggle (UiContext& c, const juce::String& id, Style s, const juce::String& t) : ctx (c), paramId (id), text (t), style (s)
 {
+    getProperties().set ("paramId", id); // for the help bar
     if (auto* p = ctx.param (id))
     {
         att = std::make_unique<juce::ParameterAttachment> (*p, [this] (float v) {
@@ -561,6 +564,7 @@ void Toggle::mouseDown (const juce::MouseEvent& e)
 // ===========================================================================
 Stepper::Stepper (UiContext& c, const juce::String& id) : ctx (c), paramId (id)
 {
+    getProperties().set ("paramId", id); // for the help bar
     pdef = ctx.def (id);
     if (auto* p = ctx.param (id))
     {

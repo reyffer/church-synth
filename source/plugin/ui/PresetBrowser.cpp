@@ -25,6 +25,17 @@ PresetBrowser::PresetBrowser (UiContext& c) : ctx (c)
     saveAsBtn.text = "Save As...";
     del.text = "Delete";
     favBtn.text = "Favourite";
+    notes.setMultiLine (true, true);
+    notes.setReadOnly (true);
+    notes.setScrollbarsShown (true);
+    notes.setCaretVisible (false);
+    notes.setFont (font (13.0f));
+    notes.setColour (juce::TextEditor::backgroundColourId, col::panelLo);
+    notes.setColour (juce::TextEditor::outlineColourId, col::border);
+    notes.setColour (juce::TextEditor::focusedOutlineColourId, col::border);
+    notes.setColour (juce::TextEditor::textColourId, col::text);
+    notes.setIndents (8, 6);
+    addAndMakeVisible (notes);
     rescanBtn.text = "Rescan";
     rescanBtn.setTooltip ("Re-read the Presets folder (after copying preset files into it)");
     rescanBtn.onClick = [this] {
@@ -102,6 +113,7 @@ void PresetBrowser::refresh()
         }
     const auto info = pm.currentInfo();
     del.setEnabled (! info.factory && info.file.existsAsFile());
+    notes.setText (info.notes.isNotEmpty() ? info.notes : juce::String ("No notes for this preset yet."), false);
     favBtn.lit = pm.isFavourite (info);
     favBtn.repaint();
     resized(); // the tag chips may need more or fewer rows
@@ -282,14 +294,22 @@ void PresetBrowser::resized()
         r.removeFromTop (8);
     list.setBounds (r.withTrimmedBottom (18));
     tagsBtn.setBounds (infoArea.getX(), infoArea.getY() + 186, infoArea.getWidth(), 26);
-    auto b = infoArea.withTrimmedTop (226);
-    auto row = [&b] { auto x = b.removeFromTop (30); b.removeFromTop (6); return x; };
-    favBtn.setBounds (row());
-    save.setBounds (row());
-    saveAsBtn.setBounds (row());
-    del.setBounds (row());
-    init.setBounds (row());
-    close.setBounds (infoArea.removeFromBottom (30));
+    auto b = infoArea.withTrimmedTop (222);
+    auto row = [&b] (FlatButton& x, FlatButton& y) {
+        auto rr = b.removeFromTop (28);
+        x.setBounds (rr.removeFromLeft (rr.getWidth() / 2 - 3));
+        rr.removeFromLeft (6);
+        y.setBounds (rr);
+        b.removeFromTop (6);
+    };
+    row (favBtn, save);
+    row (saveAsBtn, del);
+    init.setBounds (b.removeFromTop (28));
+    b.removeFromTop (12);
+    close.setBounds (b.removeFromBottom (30));
+    b.removeFromBottom (10);
+    notesTitle = b.removeFromTop (18);
+    notes.setBounds (b);
 }
 
 void PresetBrowser::paint (juce::Graphics& g)
@@ -338,6 +358,9 @@ void PresetBrowser::paint (juce::Graphics& g)
     g.setFont (font (12.0f));
     g.drawFittedText (info.tags.isEmpty() ? juce::String ("No tags") : "Tags: " + info.tags.joinIntoString (", "),
                       ir.removeFromTop (34), juce::Justification::topLeft, 2);
+    g.setColour (col::textDim);
+    g.setFont (font (11.0f, true));
+    g.drawText ("HOW IT'S BUILT", notesTitle, juce::Justification::centredLeft);
     // Tag chips
     for (const auto& [tag, rr] : chips)
     {
@@ -420,7 +443,7 @@ void PresetBrowser::mouseDown (const juce::MouseEvent& e)
                                      if (safe == nullptr)
                                          return;
                                      if (r == 1)
-                                         askText ("Rename tag", "New name for \"" + tag + "\" (on every preset):", tag,
+                                         askText ("Rename tag", "New name for \"" + tag + "\" (on every preset, and on presets you add later):", tag,
                                                   [this, tag] (const juce::String& to) {
                                                       ctx.proc.presets().renameTag (tag, to);
                                                       if (activeTags.contains (tag, true))
@@ -432,7 +455,7 @@ void PresetBrowser::mouseDown (const juce::MouseEvent& e)
                                                   });
                                      else if (r == 2)
                                          juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "Delete tag",
-                                                                             "Remove the tag \"" + tag + "\" from every preset?", "Delete", "Cancel", nullptr,
+                                                                             "Remove the tag \"" + tag + "\" from every preset (and from presets you add later)?", "Delete", "Cancel", nullptr,
                                                                              juce::ModalCallbackFunction::create ([this, tag] (int ok) {
                                                                                  if (ok == 1)
                                                                                  {

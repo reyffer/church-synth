@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 
 set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
 
-project(ChurchSynth VERSION 0.1.0 LANGUAGES C CXX)
+project(ChurchSynth VERSION 0.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -82,6 +82,7 @@ if(CS_BUILD_PLUGIN)
         source/plugin/PluginProcessor.cpp
         source/plugin/PresetManager.cpp
         source/plugin/FactoryPresets.cpp
+        source/plugin/FactoryNotes.cpp
         source/plugin/PluginEditor.cpp)
     file(GLOB CS_UI_SOURCES CONFIGURE_DEPENDS source/plugin/ui/*.cpp)
     list(APPEND CS_PLUGIN_SOURCES ${CS_UI_SOURCES})
@@ -132,5 +133,6 @@ if(CS_BUILD_PLUGIN)
             juce::juce_audio_formats
             juce::juce_recommended_config_flags)
         add_test(NAME plugin_state_test COMMAND cs_state_test)
+        add_test(NAME plugin_thread_stress COMMAND cs_state_test --stress-threads 8)
     endif()
 endif()

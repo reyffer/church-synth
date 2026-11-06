@@ -53,6 +53,7 @@ public:
     int activeVoiceCount() const noexcept;
 
     // Editor telemetry: published after each render while uiActive is set (cheap, lock-free).
+    std::atomic<bool> monoCheck { false }; // editor's Mono button: listen in mono (not saved)
     std::atomic<bool> uiActive { false };
     std::atomic<float> uiSource[NumModSources] {};
     std::atomic<int> uiVoices { 0 };
@@ -85,6 +86,14 @@ private:
     int vmNoteStep[kNumRandoms][128];
     void assignVoiceModSteps (Voice& v, int note) noexcept;
     void tickGlobalSources (int n, double blockPpq) noexcept;
+    bool anyVoiceActive() const noexcept;
+    void trackSilence (const float* outL, const float* outR, int n) noexcept;
+    int silentSamples = 0, idleAfter = 12000;
+
+public:
+    uint64_t idleBlocks = 0; // render calls skipped while idle (tests / benchmark)
+
+private:
     void computeUsedSources() noexcept;
     void renderChunk (float* outL, float* outR, int n) noexcept;
     bool sustainPedal = false, holdLatched = false;

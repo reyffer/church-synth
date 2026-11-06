@@ -6,8 +6,9 @@ A lean, reliable hybrid synth for live worship, built to run several instances i
 
 ## Using it
 
-- **Preset browser:** search, categories, favourites and **tags**: click tag chips to filter, *Edit Tags* (or right-click a preset) to tag it, right-click a tag to rename or delete it everywhere. **Rescan** picks up preset files you copied into `Documents/Church Synth/Presets`.
-- **Top bar:** menu, preset name (click for the browser), favourite, save, previous / next preset, the SYNTH / FX / SEQ pages, FX and Seq power buttons, and master volume with an output meter. The output has a peak limiter at −1 dBFS.
+- **Help bar:** hover any control and the footer explains what it does. Each factory preset has **How it's built** notes in the browser.
+- **Preset browser:** search, categories, favourites and **tags**: click tag chips to filter, *Edit Tags* (or right-click a preset) to tag it, right-click a tag to rename or delete it everywhere. **Rescan** picks up preset files you copied into `Documents/Church Synth/Presets`. Tag renames and deletes are remembered for presets you add later.
+- **Top bar:** menu, preset name (click for the browser), favourite, save, previous / next preset, the SYNTH / FX / SEQ pages, FX and Seq power buttons, MONO check, master width and volume with an output meter. Click the logo to return to the Synth page; the version is shown next to it. The output has a peak limiter at −1 dBFS.
 - **Modulation:** click a source in the coloured strip (LFO 1, Env 2, M 1...) and drag any knob to set how much it moves that knob; double-click a knob to remove that source from it. You can also drag a source tile onto a knob. Coloured rings show what is modulating each knob. Click **Done** (footer), press Esc or click any empty area to go back to normal knob editing. **Mod routes** in the footer lists everything (and sidechains).
 - **Sequencer:** *generate* writes a new pattern in the chosen scale (its arrow sets how busy, the range, octave jumps and slides); *Regen* re-rolls the random amounts.
 - **Envelopes:** drag the points on the curves (attack, decay / sustain, release); Shift for fine moves, double-click to reset.

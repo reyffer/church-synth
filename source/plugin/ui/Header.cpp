@@ -64,7 +64,7 @@ void iconSave (juce::Graphics& g, juce::Rectangle<float> r, juce::Colour c)
 } // namespace
 
 // ===========================================================================
-TopBar::TopBar (UiContext& uc) : ctx (uc), seqPower (uc, "seq_on", Toggle::Power), fxPower (uc, "fx_on", Toggle::Power), master (uc, "master_vol", {})
+TopBar::TopBar (UiContext& uc) : ctx (uc), seqPower (uc, "seq_on", Toggle::Power), fxPower (uc, "fx_on", Toggle::Power), master (uc, "master_vol", {}), width (uc, "master_width", {})
 {
     menu.outline = false;
     menu.icon = iconMenu;
@@ -98,6 +98,19 @@ TopBar::TopBar (UiContext& uc) : ctx (uc), seqPower (uc, "seq_on", Toggle::Power
         b->fontSize = 13.0f;
     }
     synthBtn.onClick = [this] { if (onPage) onPage (Page::Synth); };
+    monoBtn.fontSize = 10.0f;
+    monoBtn.litColour = col::gold;
+    monoBtn.setTooltip ("Mono check: listen to the output folded to mono, like a mono PA (only while lit; never saved)");
+    monoBtn.lit = ctx.proc.isMonoCheck();
+    monoBtn.onClick = [this] {
+        ctx.proc.setMonoCheck (! ctx.proc.isMonoCheck());
+        monoBtn.lit = ctx.proc.isMonoCheck();
+        monoBtn.repaint();
+    };
+    width.setLabel ({});
+    width.setTooltip ("Master Width: stereo width of the whole output (100 % = as designed, 0 % = mono)");
+    addAndMakeVisible (monoBtn);
+    addAndMakeVisible (width);
     fxBtn.onClick = [this] { if (onPage) onPage (Page::Fx); };
     seqBtn.onClick = [this] { if (onPage) onPage (Page::Seq); };
     seqPower.setTooltip ("Seq/Arp on/off");
@@ -144,8 +157,11 @@ void TopBar::resized()
     meterArea = right.removeFromRight (8).reduced (0, 8);
     right.removeFromRight (4);
     master.setBounds (right.removeFromRight (40).reduced (2, 4));
+    width.setBounds (right.removeFromRight (34).reduced (2, 6));
+    right.removeFromRight (2);
+    monoBtn.setBounds (right.removeFromRight (40).reduced (0, 12));
     // Page tabs; each power switch sits right against its own label: SYNTH   (|)FX   (|)SEQ
-    right.removeFromRight (16);
+    right.removeFromRight (12);
     seqBtn.setBounds (right.removeFromRight (40).reduced (0, 9));
     seqPower.setBounds (right.removeFromRight (18).reduced (1, 12));
     right.removeFromRight (18);
@@ -203,6 +219,14 @@ void TopBar::paint (juce::Graphics& g)
         };
         word ("CHURCH", font (20.0f, true), col::gold);
         word ("SYNTH", font (20.0f, false), col::text);
+        // Version (major.minor), small and dark, so it's easy to check which build is loaded.
+        const auto ver = juce::StringArray::fromTokens (JucePlugin_VersionString, ".", {});
+        const juce::String v = "v" + ver[0] + "." + (ver.size() > 1 ? ver[1] : juce::String ("0"));
+        g.setColour (col::textDim.withAlpha (0.55f));
+        g.setFont (font (11.0f));
+        const float vw = juce::GlyphArrangement::getStringWidth (font (11.0f), v);
+        g.drawText (v, juce::Rectangle<float> (x - gap + 5.0f, (float) getHeight() * 0.5f - 3.0f, vw + 2.0f, 12.0f), juce::Justification::centredLeft);
+        logoArea = juce::Rectangle<float> (x0 - 4.0f, 0.0f, x - x0 + vw + 6.0f, (float) getHeight()).toNearestInt();
     }
 
     // Preset bar
@@ -226,6 +250,15 @@ void TopBar::mouseDown (const juce::MouseEvent& e)
 {
     if (nameArea.contains (e.getPosition()) && onBrowser)
         onBrowser();
+    else if (logoArea.contains (e.getPosition()) && onPage)
+        onPage (Page::Synth); // the logo is the "home" button
+}
+
+void TopBar::mouseMove (const juce::MouseEvent& e)
+{
+    const bool overLogo = logoArea.contains (e.getPosition());
+    setMouseCursor (overLogo || nameArea.contains (e.getPosition()) ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+    setTooltip (overLogo ? "Back to the Synth page" : juce::String());
 }
 
 // ===========================================================================
@@ -320,10 +353,12 @@ void Footer::paint (juce::Graphics& g)
     }
     else
     {
-        g.setColour (learnText.isNotEmpty() ? col::gold : col::textFaint);
-        g.drawText (learnText.isNotEmpty() ? learnText
-                                           : juce::String ("Click a mod source to edit amounts on the knobs, or drag it onto a knob. Right-click a control for MIDI learn."),
-                    r, juce::Justification::centredLeft);
+        // Priority: MIDI-learn status, then help for the control under the mouse, then a hint.
+        g.setColour (learnText.isNotEmpty() ? col::gold : (helpText.isNotEmpty() ? col::text : col::textFaint));
+        g.drawFittedText (learnText.isNotEmpty() ? learnText
+                          : helpText.isNotEmpty() ? helpText
+                                                  : juce::String ("Hover a control to see what it does. Click a mod source to edit amounts on the knobs; right-click a control for MIDI learn."),
+                          r, juce::Justification::centredLeft, 1, 0.8f);
     }
     g.setColour (col::textDim);
     g.drawText ("Play Mode", playCaption, juce::Justification::centredRight);

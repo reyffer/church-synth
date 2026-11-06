@@ -279,7 +279,7 @@ void addRate (Builder& b, const juce::String& p, const juce::String& n, float de
 void addEnvelope (Builder& b, const juce::String& p, const juce::String& n, std::function<EnvParams& (SynthParams&)> env,
                   std::function<int& (SynthParams&)> retrig)
 {
-    b.flt (p + "_a", n + " Attack", 0.001f, 20, 0.002f, [env] (SynthParams& s, float v) { env (s).attack = v; }, "s", 0.5f);
+    b.flt (p + "_a", n + " Attack", 0.0f, 20, 0.002f, [env] (SynthParams& s, float v) { env (s).attack = v; }, "s", 0.5f);
     b.flt (p + "_d", n + " Decay", 0.001f, 20, 0.5f, [env] (SynthParams& s, float v) { env (s).decay = v; }, "s", 0.8f);
     b.flt (p + "_s", n + " Sustain", 0, 1, 0, [env] (SynthParams& s, float v) { env (s).sustain = v; });
     b.flt (p + "_r", n + " Release", 0.001f, 20, 0.4f, [env] (SynthParams& s, float v) { env (s).release = v; }, "s", 0.8f);
@@ -482,7 +482,7 @@ std::vector<ParamDef> build()
     b.choice ("amp_mod_src", "Amp Mod Source", sourceNames(), SrcVelocity, [] (SynthParams& s, float v) { s.ampModSource = asInt (v); });
 
     b.group = "Amp Envelope";
-    b.flt ("env1_a", "Env Amp Attack", 0.001f, 20, 0.002f, [] (SynthParams& s, float v) { s.ampEnv.attack = v; }, "s", 0.5f);
+    b.flt ("env1_a", "Env Amp Attack", 0.0f, 20, 0.002f, [] (SynthParams& s, float v) { s.ampEnv.attack = v; }, "s", 0.5f);
     b.flt ("env1_d", "Env Amp Decay", 0.001f, 20, 0.4f, [] (SynthParams& s, float v) { s.ampEnv.decay = v; }, "s", 0.8f);
     b.flt ("env1_s", "Env Amp Sustain", 0, 1, 1, [] (SynthParams& s, float v) { s.ampEnv.sustain = v; });
     b.flt ("env1_r", "Env Amp Release", 0.001f, 20, 0.25f, [] (SynthParams& s, float v) { s.ampEnv.release = v; }, "s", 0.8f);
@@ -508,6 +508,7 @@ std::vector<ParamDef> build()
 
     b.group = "Master";
     b.flt ("master_vol", "Master Volume", 0, 1, 0.8f, [] (SynthParams& s, float v) { s.masterVolume = v; });
+    b.flt ("master_width", "Master Width", 0, 1, 1, [] (SynthParams& s, float v) { s.masterWidth = v; });
 
     return b.defs;
 }

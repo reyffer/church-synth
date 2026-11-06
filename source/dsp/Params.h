@@ -350,6 +350,7 @@ struct SynthParams
     bool hold = false;
 
     float masterVolume = 0.8f;
+    float masterWidth = 1.0f; // stereo width of the output (0 = mono, 1 = as designed)
 
     std::array<float, 4> macro {};
 

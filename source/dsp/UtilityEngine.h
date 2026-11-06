@@ -51,15 +51,17 @@ public:
         {
             if (pos >= end)
             {
-                if (p.loop)
-                    pos -= end;
+                // fmod, not "-= end": the sample can be swapped for a shorter one while
+                // a note plays, or the rate can exceed the length (high Tune + key track).
+                if (p.loop && end >= 1.0)
+                    pos = std::fmod (pos, end);
                 else
                 {
                     finished = true;
                     break;
                 }
             }
-            const size_t i0 = (size_t) pos;
+            const size_t i0 = std::min ((size_t) pos, len - 1);
             const size_t i1 = (i0 + 1 < len) ? i0 + 1 : (p.loop ? 0 : i0);
             const float fr = (float) (pos - (double) i0);
             float sl = dl[i0] + fr * (dl[i1] - dl[i0]);

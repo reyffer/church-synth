@@ -249,7 +249,7 @@ void ChurchSynthProcessor::resetHistory (const juce::String& label)
 
 void ChurchSynthProcessor::checkpoint (const juce::String& label)
 {
-    if (restoring)
+    if (restoring.load())
         return;
     const auto now = juce::Time::currentTimeMillis();
     // Drop the redo branch, then merge quick repeats of the same edit (e.g. drawing a lane).
@@ -285,7 +285,7 @@ juce::StringArray ChurchSynthProcessor::historyLabels() const
 void ChurchSynthProcessor::parameterGestureChanged (int index, bool starting)
 {
     // Only edits made in our editor (message thread) become undo steps.
-    if (starting || restoring || ! juce::MessageManager::existsAndIsCurrentThread())
+    if (starting || restoring.load() || ! juce::MessageManager::existsAndIsCurrentThread())
         return;
     if (index >= 0 && index < (int) paramPtrs.size())
         pendingGestureLabel = paramPtrs[(size_t) index]->getName (60);
@@ -877,7 +877,13 @@ void ChurchSynthProcessor::restoreStateTree (const juce::ValueTree& source, Load
 {
     if (! source.isValid())
         return;
-    const juce::ScopedValueSetter<bool> guard (restoring, true);
+    struct RestoreGuard
+    {
+        std::atomic<bool>& flag;
+        const bool previous;
+        explicit RestoreGuard (std::atomic<bool>& f) : flag (f), previous (f.exchange (true)) {}
+        ~RestoreGuard() { flag.store (previous); }
+    } guard (restoring);
     auto tree = source.createCopy();
     tree.removeProperty ("presetFormat", nullptr);
 

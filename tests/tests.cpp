@@ -338,6 +338,90 @@ static void testSeqGenerate()
     CHECK (differs > 200, "generate: new seed, new pattern");
 }
 
+
+// A 0 ms attack is instant (no ramp); width 0 and the mono check fold to mono.
+static void testInstantAttackAndWidth()
+{
+    auto firstRms = [] (float attack) {
+        auto sPtr = std::make_unique<SynthCore>();
+        SynthCore& s = *sPtr;
+        s.setSampleRate (48000.0f);
+        s.params.ampEnv.attack = attack;
+        s.params.masterVolume = 0.25f;
+        s.noteOn (60, 1.0f);
+        std::vector<float> l (48), r (48);
+        s.render (l.data(), r.data(), 48);
+        double e = 0.0;
+        for (int i = 0; i < 24; ++i) e += l[(size_t) i] * l[(size_t) i];
+        return std::sqrt (e / 24.0);
+    };
+    CHECK (firstRms (0.0f) > 3.0 * firstRms (0.002f), "attack 0: full level from the start");
+
+    auto sideRatio = [] (float width, bool mono) {
+        auto sPtr = std::make_unique<SynthCore>();
+        SynthCore& s = *sPtr;
+        s.setSampleRate (48000.0f);
+        s.params.engine[0].unisonOn = true;
+        s.params.engine[0].unisonVoices = 4;
+        s.params.masterVolume = 0.25f;
+        s.params.masterWidth = width;
+        s.monoCheck.store (mono);
+        s.noteOn (60, 1.0f);
+        std::vector<float> l (9600), r (9600);
+        s.render (l.data(), r.data(), 9600);
+        double side = 0.0, all = 0.0;
+        for (size_t i = 4800; i < l.size(); ++i)
+        {
+            side += (l[i] - r[i]) * (l[i] - r[i]);
+            all += l[i] * l[i] + r[i] * r[i];
+        }
+        return side / all;
+    };
+    CHECK (sideRatio (1.0f, false) > 0.01, "width 1: stereo");
+    CHECK (sideRatio (0.0f, false) < 1.0e-9, "width 0: mono");
+    CHECK (sideRatio (1.0f, true) < 1.0e-9, "mono check: mono");
+}
+
+
+
+// Regression (found by the threaded stress test): swapping the noise for a shorter
+// one while a looping note plays, with a high Tune, read past the sample's end.
+static void testNoiseSwapMidNote()
+{
+    auto& lib = ContentLibrary::get();
+    int longest = 0, shortest = 0;
+    size_t lmax = 0, lmin = SIZE_MAX;
+    for (int k = 0; k < lib.numFactoryNoises(); ++k)
+    {
+        const auto len = lib.factoryNoise (k)->length();
+        if (len > lmax) { lmax = len; longest = k; }
+        if (len < lmin) { lmin = len; shortest = k; }
+    }
+    auto sPtr = std::make_unique<SynthCore>();
+    SynthCore& s = *sPtr;
+    s.setSampleRate (48000.0f);
+    auto& u = s.params.utility;
+    u.noise[0].on = true;
+    u.noise[0].volume = 0.5f;
+    u.noise[0].loop = true;
+    u.noise[0].randomPhase = true;
+    u.noise[0].sample = lib.factoryNoise (longest);
+    s.noteOn (60, 1.0f);
+    std::vector<float> l (512), r (512);
+    s.render (l.data(), r.data(), 512);
+    u.noise[0].sample = lib.factoryNoise (shortest);
+    u.noise[0].tune = 36.0f;
+    u.noise[0].keytrack = true;
+    s.noteOn (108, 1.0f);
+    bool finite = true;
+    for (int i = 0; i < 200; ++i)
+    {
+        s.render (l.data(), r.data(), 512);
+        for (float v : l) finite = finite && std::isfinite (v);
+    }
+    CHECK (finite, "noise swap mid-note stays in bounds");
+}
+
 // --- Milestone 2 ----------------------------------------------------------
 
 static void testFactoryWavetablesPlay()
@@ -1697,11 +1781,35 @@ static void testVintageChorusIsWide()
     CHECK (10.0 * std::log10 (side / mid) > -3.0, "vintage chorus: side within 3 dB of mid");
 }
 
+// Idle: once notes and the reverb tail have died away, render calls are skipped;
+// a new note sounds straight away.
+static void testIdleSkip()
+{
+    FxRig rig;
+    auto& s = *rig.core;
+    rig.setSlot (0, fx::FxReverb);
+    std::vector<float> l (512), r (512);
+    s.noteOn (60, 1.0f);
+    for (int i = 0; i < 20; ++i) s.render (l.data(), r.data(), 512);
+    s.noteOff (60);
+    const auto before = s.idleBlocks;
+    for (int i = 0; i < 2000; ++i) s.render (l.data(), r.data(), 512); // ~21 s: tail gone
+    CHECK (s.idleBlocks > before + 100, "idle: render skipped after the tail");
+    s.noteOn (64, 1.0f);
+    s.render (l.data(), r.data(), 512);
+    float pk = 0.0f;
+    for (float v : l) pk = std::max (pk, std::abs (v));
+    CHECK (pk > 1.0e-3f, "idle: a note wakes it at once");
+}
+
 int main()
 {
     testDriveAddsHarmonics();
     testRotarySpeeds();
     testSeqGenerate();
+    testInstantAttackAndWidth();
+    testNoiseSwapMidNote();
+    testIdleSkip();
     testFxPowerSwitch();
     testOutputLimiter();
     testUnisonKeepsLevel();

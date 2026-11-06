@@ -175,7 +175,7 @@ const std::vector<FactoryPreset>& factoryPresets()
               osc (b, 0, 2, kSine, 0.0f, 14.0f);
               b.set ("e1_mod_src", 0.0f).set ("e1_o1_fm", 0.18f).set ("e1_vol", 0.65f);
               filter (b, 0, kLP12, 6000.0f, 0.0f, 0.3f);
-              env (b, "env1", 0.003f, 2.2f, 0.25f, 0.5f);
+              env (b, "env1", 0.0f, 2.2f, 0.25f, 0.5f);
               env (b, "env2", 0.001f, 0.4f, 0.0f, 0.3f);
               b.route ("Env 2", "e1_o1_fm", 0.3f).route ("Velocity", "e1_o1_fm", 0.25f);
               b.set ("amp_velo", 0.7f);
@@ -208,7 +208,7 @@ const std::vector<FactoryPreset>& factoryPresets()
               b.set ("e1_vol", 0.6f);
               noise (b, 0, "Key Click", 0.25f, 0.2f, false);
               filter (b, 0, kLP24, 1800.0f, 0.15f, 0.6f);
-              env (b, "env1", 0.003f, 1.2f, 0.4f, 0.4f);
+              env (b, "env1", 0.0f, 1.2f, 0.4f, 0.4f);
               env (b, "env2", 0.001f, 0.6f, 0.15f, 0.4f);
               b.route ("Env 2", "f1_cutoff", 0.35f).route ("Velocity", "f1_cutoff", 0.25f);
               b.set ("amp_velo", 0.6f);
@@ -250,7 +250,7 @@ const std::vector<FactoryPreset>& factoryPresets()
               b.set ("master_vol", 1.00f); // level-matched across the factory set
               wavetable (b, 0, "Glass", 0.45f, 1.0f);
               filter (b, 0, kLP12, 5000.0f, 0.05f, 0.4f);
-              env (b, "env1", 0.002f, 2.4f, 0.0f, 1.2f);
+              env (b, "env1", 0.0f, 2.4f, 0.0f, 1.2f);
               b.set ("amp_velo", 0.6f);
               b.route ("Velocity", "e1_wt_pos", 0.25f);
               delay (b, 0, kDiv4, 0.3f, 0.22f);
@@ -267,7 +267,7 @@ const std::vector<FactoryPreset>& factoryPresets()
               uni (b, 0, 0, 2, 0.15f);
               b.set ("e1_vol", 1.0f);
               filter (b, 0, kLP24, 400.0f, 0.2f, 0.4f);
-              env (b, "env1", 0.002f, 0.6f, 0.0f, 0.4f);
+              env (b, "env1", 0.0f, 0.6f, 0.0f, 0.4f);
               env (b, "env2", 0.001f, 0.35f, 0.0f, 0.3f);
               b.route ("Env 2", "f1_cutoff", 0.55f).route ("Velocity", "f1_cutoff", 0.15f);
               delay (b, 0, kDiv8D, 0.35f, 0.3f, true);
@@ -280,7 +280,7 @@ const std::vector<FactoryPreset>& factoryPresets()
               b.set ("master_vol", 0.75f); // level-matched across the factory set
               wavetable (b, 0, "FM Ratio 3", 0.5f, 0.6f);
               filter (b, 0, kLP12, 7000.0f, 0.0f, 0.3f);
-              env (b, "env1", 0.001f, 1.8f, 0.0f, 1.6f);
+              env (b, "env1", 0.0f, 1.8f, 0.0f, 1.6f);
               env (b, "env2", 0.001f, 0.8f, 0.0f, 0.5f);
               b.route ("Env 2", "e1_wt_pos", 0.4f);
               b.set ("amp_velo", 0.6f);
@@ -312,7 +312,7 @@ const std::vector<FactoryPreset>& factoryPresets()
               noise (b, 0, "Pluck Noise", 0.3f, 0.3f, false);
               b.set ("e1_vol", 0.75f);
               filter (b, 0, kLP12, 4500.0f, 0.1f, 0.5f);
-              env (b, "env1", 0.001f, 0.9f, 0.0f, 0.5f);
+              env (b, "env1", 0.0f, 0.9f, 0.0f, 0.5f);
               b.set ("amp_velo", 0.6f);
               hall (b, 0.25f, 0.5f, 0.5f);
               macros (b, "Brightness", "Space", "Overtone", "Decay");
@@ -430,7 +430,7 @@ const std::vector<FactoryPreset>& factoryPresets()
               osc (b, 0, 1, kSine, 0.6f, -12.0f);
               b.set ("e1_vol", 0.7f);
               filter (b, 0, kLP24, 300.0f, 0.25f, 0.3f);
-              env (b, "env1", 0.002f, 0.45f, 0.0f, 0.2f);
+              env (b, "env1", 0.0f, 0.45f, 0.0f, 0.2f);
               env (b, "env2", 0.001f, 0.2f, 0.0f, 0.2f);
               b.route ("Env 2", "f1_cutoff", 0.5f);
               macros (b, "Brightness", "Space", "Punch", "Decay");
@@ -543,7 +543,7 @@ const std::vector<FactoryPreset>& factoryPresets()
               osc (b, 0, 1, kSquare, 0.4f, 12.0f, 0.0f, 0.3f);
               b.set ("e1_vol", 0.95f);
               filter (b, 0, kLP24, 1500.0f, 0.2f, 0.4f);
-              env (b, "env1", 0.002f, 0.3f, 0.0f, 0.2f);
+              env (b, "env1", 0.0f, 0.3f, 0.0f, 0.2f);
               env (b, "env2", 0.001f, 0.2f, 0.0f, 0.2f);
               b.route ("Env 2", "f1_cutoff", 0.35f);
               b.set ("seq_on", 1.0f).set ("seq_mode", 0.0f).set ("seq_arp_order", (float) ArpUp).set ("seq_arp_octaves", 2.0f).set ("seq_rate", (float) kDiv16);
@@ -589,7 +589,7 @@ const std::vector<FactoryPreset>& factoryPresets()
               b.set ("master_vol", 0.58f); // level-matched across the factory set
               wavetable (b, 0, "FM Ratio 2", 0.4f, 0.6f);
               filter (b, 0, kLP12, 6000.0f, 0.0f, 0.3f);
-              env (b, "env1", 0.001f, 1.2f, 0.0f, 1.0f);
+              env (b, "env1", 0.0f, 1.2f, 0.0f, 1.0f);
               b.set ("seq_on", 1.0f).set ("seq_mode", 1.0f).set ("seq_rate", (float) kDiv8).set ("seq_scale", 10.0f).set ("seq_snap", 1.0f).set ("seq_autoregen", 6.0f);
               auto p = gatePattern ({ 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1 }, 0.6f);
               p.tracks[TrackPitch].random = 0.8f;

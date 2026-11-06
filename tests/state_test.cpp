@@ -6,6 +6,10 @@
 #include "plugin/PresetManager.h"
 #include "dsp/fx/Effects.h"
 #include "packs/Packs.h"
+#include "plugin/ui/Help.h"
+
+#include <atomic>
+#include <thread>
 
 #include <cmath>
 #include <cstdio>
@@ -279,11 +283,194 @@ static int renderPack (const juce::File& packDir, const juce::File& wavDir)
     return 0;
 }
 
+// --stress-threads [seconds]: like pluginval's "Parameter thread safety" test, but
+// longer and meaner: the audio thread plays notes while other threads set random
+// parameters (including FX types), read and write the state, and load presets.
+// Run it in a ThreadSanitizer build to find data races.
+static int stressThreads (double seconds, int mask = 7)
+{
+    auto pPtr = std::make_unique<ChurchSynthProcessor>();
+    auto& p = *pPtr;
+    p.prepareToPlay (48000.0, 256);
+    std::atomic<bool> stop { false };
+    auto& params = p.getParameters();
+    std::thread setter ([&] {
+        juce::Random rng (1);
+        while (! stop.load() && (mask & 1) != 0)
+            for (int k = 0; k < 64 && ! stop.load(); ++k)
+                params[rng.nextInt (params.size())]->setValue (rng.nextFloat());
+    });
+    std::thread setterNotify ([&] {
+        juce::Random rng (2);
+        while (! stop.load() && (mask & 2) != 0)
+        {
+            auto* prm = params[rng.nextInt (params.size())];
+            prm->beginChangeGesture();
+            prm->setValueNotifyingHost (rng.nextFloat());
+            prm->endChangeGesture();
+        }
+    });
+    std::thread stateThread ([&] {
+        juce::Random rng (3);
+        while (! stop.load() && (mask & 4) != 0)
+        {
+            juce::MemoryBlock mb;
+            p.getStateInformation (mb);
+            if (rng.nextInt (4) == 0 && (mask & 8) == 0)
+                p.setStateInformation (mb.getData(), (int) mb.getSize());
+        }
+    });
+    juce::AudioBuffer<float> buf (2, 256);
+    juce::Random rng (4);
+    const auto end = juce::Time::getMillisecondCounterHiRes() + seconds * 1000.0;
+    int blocks = 0;
+    bool finite = true;
+    while (juce::Time::getMillisecondCounterHiRes() < end)
+    {
+        juce::MidiBuffer midi;
+        if (rng.nextInt (8) == 0)
+            midi.addEvent (juce::MidiMessage::noteOn (1, 36 + rng.nextInt (48), (juce::uint8) 100), rng.nextInt (256));
+        if (rng.nextInt (8) == 0)
+            midi.addEvent (juce::MidiMessage::noteOff (1, 36 + rng.nextInt (48)), rng.nextInt (256));
+        buf.clear();
+        p.processBlock (buf, midi);
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < 256; ++i)
+                if (finite && ! std::isfinite (buf.getSample (ch, i)))
+                {
+                    finite = false;
+                    std::printf ("first non-finite sample at block %d\n", blocks);
+                }
+        if ((++blocks & 31) == 0)
+            p.syncEffects(); // what the plugin timer does on the message thread
+    }
+    stop.store (true);
+    setter.join();
+    setterNotify.join();
+    stateThread.join();
+    std::printf ("stress: %d blocks, output %s\n", blocks, finite ? "finite" : "NOT FINITE");
+    return finite ? 0 : 1;
+}
+
+// --fuzz [trials]: random values for every parameter, play notes, check the output
+// stays finite. On a failure, prints which parameters cause it (resetting each one
+// alone to see if the problem goes away).
+static int fuzzParams (int trials)
+{
+    auto pPtr = std::make_unique<ChurchSynthProcessor>();
+    auto& p = *pPtr;
+    auto& params = p.getParameters();
+    auto run = [&] (const std::vector<float>& values) {
+        for (int k = 0; k < params.size(); ++k)
+            params[k]->setValue (values[(size_t) k]);
+        p.syncEffects();
+        p.prepareToPlay (48000.0, 256);
+        juce::AudioBuffer<float> buf (2, 256);
+        for (int blk = 0; blk < 200; ++blk)
+        {
+            juce::MidiBuffer midi;
+            if (blk == 1)
+                for (int n : { 36, 60, 64, 67, 84 })
+                    midi.addEvent (juce::MidiMessage::noteOn (1, n, (juce::uint8) 110), 0);
+            if (blk == 120)
+                for (int n : { 36, 60, 64, 67, 84 })
+                    midi.addEvent (juce::MidiMessage::noteOff (1, n), 0);
+            buf.clear();
+            p.processBlock (buf, midi);
+            for (int ch = 0; ch < 2; ++ch)
+                for (int i = 0; i < 256; ++i)
+                    if (! std::isfinite (buf.getSample (ch, i)) || std::abs (buf.getSample (ch, i)) > 1.0f)
+                        return false;
+        }
+        return true;
+    };
+    int failures = 0;
+    for (int t = 0; t < trials; ++t)
+    {
+        juce::Random rng (1000 + t);
+        std::vector<float> values ((size_t) params.size()), defaults ((size_t) params.size());
+        for (int k = 0; k < params.size(); ++k)
+        {
+            values[(size_t) k] = rng.nextFloat();
+            defaults[(size_t) k] = params[k]->getDefaultValue();
+        }
+        if (run (values))
+            continue;
+        ++failures;
+        std::printf ("FAIL: trial %d is not finite/over full scale. Culprits:", t);
+        for (int k = 0; k < params.size(); ++k)
+        {
+            auto v2 = values;
+            v2[(size_t) k] = defaults[(size_t) k];
+            if (run (v2))
+                std::printf (" %s=%.3f", params[k]->getName (40).toRawUTF8(), values[(size_t) k]);
+        }
+        std::printf ("\n");
+        if (failures >= 5)
+            break;
+    }
+    std::printf ("fuzz: %d failing of %d trials\n", failures, trials);
+    return failures == 0 ? 0 : 1;
+}
+
+// --fuzz-dynamic [blocks]: single-threaded; before each audio block a few random
+// parameters change (like knobs being turned while playing). Stops at the first
+// non-finite sample and prints the most recent changes.
+static int fuzzDynamic (int maxBlocks, int seed)
+{
+    auto pPtr = std::make_unique<ChurchSynthProcessor>();
+    auto& p = *pPtr;
+    auto& params = p.getParameters();
+    p.prepareToPlay (48000.0, 256);
+    juce::Random rng (seed);
+    juce::AudioBuffer<float> buf (2, 256);
+    std::vector<std::pair<int, float>> recent;
+    for (int blk = 0; blk < maxBlocks; ++blk)
+    {
+        for (int c = 0; c < 3; ++c)
+        {
+            const int k = rng.nextInt (params.size());
+            const float v = rng.nextFloat();
+            params[k]->setValue (v);
+            recent.push_back ({ k, v });
+            if (recent.size() > 40)
+                recent.erase (recent.begin());
+        }
+        if ((blk & 31) == 0)
+            p.syncEffects();
+        juce::MidiBuffer midi;
+        if (rng.nextInt (8) == 0)
+            midi.addEvent (juce::MidiMessage::noteOn (1, 36 + rng.nextInt (48), (juce::uint8) 100), rng.nextInt (256));
+        if (rng.nextInt (8) == 0)
+            midi.addEvent (juce::MidiMessage::noteOff (1, 36 + rng.nextInt (48)), rng.nextInt (256));
+        buf.clear();
+        p.processBlock (buf, midi);
+        for (int ch = 0; ch < 2; ++ch)
+            for (int i = 0; i < 256; ++i)
+                if (! std::isfinite (buf.getSample (ch, i)))
+                {
+                    std::printf ("non-finite at block %d. Recent changes (oldest first):\n", blk);
+                    for (auto [k, v] : recent)
+                        std::printf ("  %s = %.3f (%s)\n", params[k]->getName (40).toRawUTF8(), v,
+                                     params[k]->getText (v, 30).toRawUTF8());
+                    return 1;
+                }
+    }
+    std::printf ("fuzz-dynamic: %d blocks finite\n", maxBlocks);
+    return 0;
+}
+
 int main (int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI init;
     int failures = 0;
 
+    if (argc > 1 && juce::String (argv[1]) == "--fuzz-dynamic")
+        return fuzzDynamic (argc > 2 ? juce::String (argv[2]).getIntValue() : 200000, argc > 3 ? juce::String (argv[3]).getIntValue() : 1);
+    if (argc > 1 && juce::String (argv[1]) == "--fuzz")
+        return fuzzParams (argc > 2 ? juce::String (argv[2]).getIntValue() : 50);
+    if (argc > 1 && juce::String (argv[1]) == "--stress-threads")
+        return stressThreads (argc > 2 ? juce::String (argv[2]).getDoubleValue() : 10.0, argc > 3 ? juce::String (argv[3]).getIntValue() : 7);
     if (argc > 3 && juce::String (argv[1]) == "--render-pack")
         return renderPack (juce::File (argv[2]), juce::File (argv[3]));
     if (argc > 2 && juce::String (argv[1]) == "--export-pack")
@@ -304,8 +491,28 @@ int main (int argc, char** argv)
             }
         };
         check (factoryPresets());
+        for (const auto& fp : factoryPresets())
+            if (factoryPresetNotes (fp.name).length() < 80 || factoryPresetTags (fp.name).isEmpty())
+            {
+                std::printf ("FAIL: factory preset %s has no notes or tags\n", fp.name);
+                ++failures;
+            }
         for (const auto& pack : presetPacks())
             check (pack.presets());
+    }
+
+    // Every parameter has a help-bar explanation.
+    {
+        auto pPtr = std::make_unique<ChurchSynthProcessor>();
+        ui::UiContext hctx (*pPtr);
+        int missing = 0;
+        for (const auto& d : cs::parameterDefs())
+            if (! ui::paramHelp (hctx, d.id).contains (": "))
+            {
+                if (++missing <= 10)
+                    std::printf ("FAIL: no help text for %s\n", d.id.toRawUTF8());
+            }
+        failures += missing;
     }
 
     if (argc > 1 && juce::String (argv[1]) == "--dump-params")
@@ -516,6 +723,28 @@ int main (int argc, char** argv)
             {
                 std::printf ("FAIL: tag delete\n");
                 ++failures;
+            }
+            // Renames and deletes are remembered for presets that arrive later.
+            {
+                const auto incoming = PresetManager::userPresetFolder().getChildFile ("zz incoming test.csp");
+                pm.renameTag ("zz Rule A", "zz Rule B");            // no preset has it yet: just the rule
+                pm.deleteTag ("zz Rule Gone");
+                pm.writePresetFile (incoming, "zz incoming test", "Pad", "test", "", { "zz Rule A", "zz Rule Gone", "Pad" });
+                pm.rescan();
+                const auto in = find ("zz incoming test");
+                if (! in.tags.contains ("zz Rule B") || in.tags.contains ("zz Rule A") || in.tags.contains ("zz Rule Gone") || ! in.tags.contains ("Pad"))
+                {
+                    std::printf ("FAIL: tag rules not applied to an incoming preset (%s)\n", in.tags.joinIntoString (", ").toRawUTF8());
+                    ++failures;
+                }
+                pm.renameTag ("zz Rule B", "zz Rule C"); // chains: A -> C as well
+                pm.rescan();
+                if (! find ("zz incoming test").tags.contains ("zz Rule C"))
+                {
+                    std::printf ("FAIL: chained tag rename\n");
+                    ++failures;
+                }
+                pm.remove (find ("zz incoming test"));
             }
             // A preset saved from a tagged one keeps its tags in the file.
             pm.load (sanctuaryInfo);

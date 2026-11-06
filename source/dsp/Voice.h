@@ -330,6 +330,8 @@ private:
 
         // --- amp envelope (control-rate points, per-sample interpolation) ----
         const float envNow = env.advance (p.ampEnv, n);
+        if (env.takeInstantStart())
+            envPrev = envNow; // 0 ms attack: start at full level on the first sample
         float vpL, vpR;
         panGains (p.voicePan, vpL, vpR);
         const float fadeStep = stealing ? -1.0f / (0.003f * sampleRate) : 0.0f; // 3 ms steal fade

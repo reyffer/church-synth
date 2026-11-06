@@ -6,7 +6,7 @@ namespace ui
 {
 enum class Page { Synth, Fx, Seq };
 
-class TopBar final : public juce::Component
+class TopBar final : public juce::Component, public juce::SettableTooltipClient
 {
 public:
     explicit TopBar (UiContext& ctx);
@@ -23,14 +23,15 @@ public:
 private:
     UiContext& ctx;
     FlatButton menu, browser, fav, prev, next, save;
-    FlatButton synthBtn { "SYNTH" }, fxBtn { "FX" }, seqBtn { "SEQ" };
+    FlatButton synthBtn { "SYNTH" }, fxBtn { "FX" }, seqBtn { "SEQ" }, monoBtn { "MONO" };
     Toggle seqPower, fxPower;
-    Knob master;
+    Knob master, width;
     juce::String name, category;
     bool modified = false, isFav = false;
     float meter = 0.0f;
-    juce::Rectangle<int> nameArea, meterArea;
+    juce::Rectangle<int> nameArea, meterArea, logoArea;
     void mouseDown (const juce::MouseEvent&) override;
+    void mouseMove (const juce::MouseEvent&) override;
 };
 
 class Footer final : public juce::Component, private juce::ChangeListener
@@ -41,6 +42,14 @@ public:
     void resized() override;
     void paint (juce::Graphics&) override;
     void refresh();
+    void setHelp (const juce::String& text)
+    {
+        if (text != helpText)
+        {
+            helpText = text;
+            repaint();
+        }
+    }
     std::function<void()> onRoutes;
 
 private:
@@ -49,7 +58,7 @@ private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override { refresh(); }
     float cpu = 0.0f;
     int voices = 0;
-    juce::String learnText;
+    juce::String learnText, helpText;
     juce::Rectangle<int> playCaption;
     void showPlayMode();
     void showHistory();

@@ -20,7 +20,8 @@ public:
 
 private:
     UiContext& ctx;
-    juce::TextEditor search;
+    juce::TextEditor search, notes;
+    juce::Rectangle<int> notesTitle;
     juce::ListBox list { "presets", this };
     FlatButton close, init, save, saveAsBtn, del, favBtn, rescanBtn, tagsBtn;
     juce::StringArray activeTags;                                  // filter: presets with all of these

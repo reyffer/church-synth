@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include "ui/Help.h"
 #include "PresetManager.h"
 
 namespace
@@ -241,6 +242,42 @@ public:
     }
 
     // Clicking anywhere except a knob or a source tile leaves mod-edit mode.
+    // Help bar: describe the control under the mouse.
+    void mouseMove (const juce::MouseEvent& e) override { updateHelp (e.eventComponent); }
+    void mouseExit (const juce::MouseEvent& e) override
+    {
+        if (e.eventComponent == this)
+            footer.setHelp ({});
+    }
+    juce::String lastHelpId, lastHelpText;
+    uint32_t lastHelpEdit = 0;
+    void updateHelp (juce::Component* c)
+    {
+        juce::String text;
+        for (; c != nullptr && c != this; c = c->getParentComponent())
+        {
+            const auto id = c->getProperties()["paramId"].toString();
+            if (id.isNotEmpty())
+            {
+                if (id != lastHelpId || ctx.lastEdit != lastHelpEdit) // the regex lookup only when it changes
+                {
+                    lastHelpId = id;
+                    lastHelpEdit = ctx.lastEdit;
+                    lastHelpText = ui::paramHelp (ctx, id);
+                }
+                text = lastHelpText;
+                break;
+            }
+            if (auto* tc = dynamic_cast<juce::TooltipClient*> (c))
+                if (const auto tip = tc->getTooltip(); tip.isNotEmpty())
+                {
+                    text = tip;
+                    break;
+                }
+        }
+        footer.setHelp (text);
+    }
+
     void mouseDown (const juce::MouseEvent& e) override
     {
         if (ctx.selectedSource < 0)

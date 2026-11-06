@@ -8,6 +8,7 @@ void SynthCore::setSampleRate (float sr) noexcept
 {
     sampleRate = sr;
     limRelease = 1.0f - std::exp (-1.0f / (0.15f * sr)); // 150 ms limiter release
+    idleAfter = (int) (0.25f * sr);                        // a quarter second of silence
     seq.setSampleRate (sr);
     for (auto& v : voices)
         v.setSampleRate (sr);
@@ -508,11 +509,29 @@ void SynthCore::render (float* outL, float* outR, int n) noexcept
 
     if (! params.seq.on && ! seq.busy())
     {
+        // Idle: no voice sounding and the output (FX tails included) has been below
+        // -100 dBFS for a while -> skip the voices and FX entirely. A note-on wakes it.
+        if (silentSamples >= idleAfter && ! anyVoiceActive())
+        {
+            std::memset (outL, 0, sizeof (float) * (size_t) n);
+            if (outR != nullptr)
+                std::memset (outR, 0, sizeof (float) * (size_t) n);
+            if (uiActive.load (std::memory_order_relaxed)) // keep the editor's LFO traces moving
+                for (int pos = 0; pos < n; pos += kBlock)
+                    tickGlobalSources (std::min (kBlock, n - pos), transport.ppq + transport.bpm / 60.0 / (double) sampleRate * pos);
+            transport.ppq += transport.bpm / 60.0 / (double) sampleRate * n;
+            uiVoices.store (0, std::memory_order_relaxed);
+            renderEpoch.fetch_add (1, std::memory_order_acq_rel); // the rack isn't touched: retired effects can go
+            ++idleBlocks;
+            return;
+        }
         // Process in chunks that fit the bus buffers.
         for (int off = 0; off < n; off += kMaxChunk)
             renderChunk (outL + off, outR + off, std::min (kMaxChunk, n - off));
+        trackSilence (outL, outR, n);
         return;
     }
+    silentSamples = 0;
     // Sequencer: render up to each of its events, then play them.
     for (int off = 0; off < n;)
     {
@@ -520,6 +539,28 @@ void SynthCore::render (float* outL, float* outR, int n) noexcept
         renderChunk (outL + off, outR + off, len);
         off += len;
     }
+}
+
+bool SynthCore::anyVoiceActive() const noexcept
+{
+    for (const auto& v : voices)
+        if (v.isActive())
+            return true;
+    return false;
+}
+
+void SynthCore::trackSilence (const float* outL, const float* outR, int n) noexcept
+{
+    float pk = 0.0f;
+    for (int i = 0; i < n; ++i)
+        pk = std::max (pk, std::abs (outL[i]));
+    if (outR != nullptr)
+        for (int i = 0; i < n; ++i)
+            pk = std::max (pk, std::abs (outR[i]));
+    if (pk < 1.0e-5f && ! anyVoiceActive())
+        silentSamples = std::min (silentSamples + n, 1 << 30);
+    else
+        silentSamples = 0;
 }
 
 void SynthCore::renderChunk (float* outL, float* outR, int n) noexcept
@@ -572,9 +613,17 @@ void SynthCore::renderChunk (float* outL, float* outR, int n) noexcept
     // effects), master volume, then a safety limiter so big chords never clip.
     constexpr float kOutputGain = 2.0f;
     const float g = params.masterVolume * kOutputGain;
+    // Width: scale the side signal; the Mono check (editor button, never saved) folds to mono.
+    const float sideGain = monoCheck.load (std::memory_order_relaxed) ? 0.0f : std::clamp (params.masterWidth, 0.0f, 1.0f);
     for (int i = 0; i < n; ++i)
     {
         float l = outL[i] * g, r = outR[i] * g;
+        if (sideGain < 1.0f)
+        {
+            const float mid = 0.5f * (l + r), side = 0.5f * (l - r) * sideGain;
+            l = mid + side;
+            r = mid - side;
+        }
         const float pk = std::max (std::abs (l), std::abs (r));
         limEnv = pk > limEnv ? pk : limEnv + limRelease * (pk - limEnv);
         const float gr = limEnv > kLimitThreshold ? kLimitThreshold / limEnv : 1.0f;

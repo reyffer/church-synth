@@ -101,6 +101,8 @@ public:
     float takeOutputPeak() noexcept { return outPeak.exchange (0.0f, std::memory_order_relaxed); } // since the last call
     const cs::SynthCore& getSynth() const noexcept { return synth; }
     void setEditorOpen (bool open) noexcept { synth.uiActive.store (open); }
+    void setMonoCheck (bool on) noexcept { synth.monoCheck.store (on); }
+    bool isMonoCheck() const noexcept { return synth.monoCheck.load(); }
     const cs::Wavetable* currentWavetable (int engine) const noexcept { return wtPtr[juce::jlimit (0, 1, engine)].load(); }
     const cs::NoiseSample* currentNoise (int slot) const noexcept { return noisePtr[juce::jlimit (0, 1, slot)].load(); }
 
@@ -195,7 +197,7 @@ private:
     };
     std::vector<HistoryEntry> history;
     int historyIndex = -1;
-    bool restoring = false;
+    std::atomic<bool> restoring { false }; // read by parameter callbacks on any thread
     uint32_t editCounter = 0;
     juce::String pendingGestureLabel;
     void resetHistory (const juce::String& label);

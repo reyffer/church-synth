@@ -43,6 +43,14 @@ public:
     }
 
     bool isActive() const noexcept { return stage != Idle; }
+    // True once after a 0 ms attack started from silence: the caller should not
+    // interpolate from the previous level (that would add a short ramp).
+    bool takeInstantStart() noexcept
+    {
+        const bool j = jumpedFromSilence;
+        jumpedFromSilence = false;
+        return j;
+    }
     Stage getStage() const noexcept { return stage; }
     float getLevel() const noexcept { return level; }
 
@@ -59,6 +67,14 @@ public:
                 break;
 
             case Attack:
+                if (p.attack <= 0.0f) // 0 ms: truly instant (from silence, the voice skips its ramp too)
+                {
+                    jumpedFromSilence = startLevel <= 0.0f;
+                    level = 1.0f;
+                    stage = Decay;
+                    t = 0.0f;
+                    break;
+                }
                 t += dtSec / std::max (p.attack, 0.0005f);
                 if (t >= 1.0f)
                 {
@@ -111,6 +127,7 @@ public:
     }
 
 private:
+    bool jumpedFromSilence = false;
     float sampleRate = 48000.0f;
     Stage stage = Idle;
     float level = 0.0f, startLevel = 0.0f, t = 0.0f;

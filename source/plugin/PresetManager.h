@@ -24,6 +24,7 @@ struct PresetInfo
     int factoryIndex = -1; // factory presets
     juce::File file;       // user presets
     juce::StringArray tags; // effective tags (the preset's own, or the user's edits)
+    juce::String notes;     // "How it's built": the recipe, what each part does, what to try
     juce::String key() const { return (factory ? "F/" : "U/") + category + "/" + name; }
 };
 
@@ -51,7 +52,7 @@ public:
     static juce::String safeFileName (const juce::String& name);
     bool writePresetFile (const juce::File& file, const juce::String& name, const juce::String& category,
                           const juce::String& author, const juce::String& description,
-                          const juce::StringArray& tags = {});
+                          const juce::StringArray& tags = {}, const juce::String& notes = {});
     juce::ValueTree treeFor (const PresetInfo& p); // the preset's state tree (empty if unreadable)
     int indexOfCurrent();                          // in all(), or -1
     PresetInfo currentInfo();
@@ -105,6 +106,11 @@ private:
     bool scanned = false;
     std::set<juce::String> favourites;
     std::map<juce::String, juce::StringArray> tagEdits; // preset key -> tags chosen by the user
+    // Remembered renames / deletes, applied to the tags of presets that arrive later
+    // (new pack files, other machines), so the user's tag scheme stays coherent.
+    std::map<juce::String, juce::String> tagRenames; // lower-case from -> to
+    juce::StringArray tagDeletes;
+    juce::StringArray applyTagRules (const juce::StringArray& tags) const;
 
     void loadFavourites();
     void loadTagEdits();
@@ -147,6 +153,7 @@ struct FactoryPreset
 };
 const std::vector<FactoryPreset>& factoryPresets();
 juce::StringArray factoryPresetTags (const juce::String& presetName); // default tags of a factory preset
+juce::String factoryPresetNotes (const juce::String& presetName);      // "How it's built" notes
 
 struct FactoryPattern
 {
