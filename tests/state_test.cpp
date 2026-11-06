@@ -200,7 +200,9 @@ static int exportPacks (const juce::File& dir, const juce::String& only = {})
 // --render-pack <exported dir> <wav dir>: one WAV per exported pack preset, with a
 // phrase that suits it (chords for keys/pads, a melody for bells and leads, a held
 // note for bass sequences). For the audition reel.
-static int renderPack (const juce::File& packDir, const juce::File& wavDir, const juce::String& only = {})
+// With sweep = true it plays a test sweep instead: single notes across the keyboard
+// (C1 to C7, 4 s each, velocity 100), then middle C at velocities 30, 64 and 127.
+static int renderPack (const juce::File& packDir, const juce::File& wavDir, const juce::String& only = {}, bool sweep = false)
 {
     auto pPtr = std::make_unique<ChurchSynthProcessor>();
     auto& p = *pPtr;
@@ -232,7 +234,32 @@ static int renderPack (const juce::File& packDir, const juce::File& wavDir, cons
                 for (int n : notes) evs.push_back ({ on, off, n, vel });
             };
             double len = 8.0;
-            if (seq && cat == "Bass")
+            const bool piano = pack.tags (fp.name).contains ("Piano") && cat == "Keys";
+            if (sweep)
+            {
+                for (int k = 0; k < 7; ++k)
+                    evs.push_back ({ 0.05 + k * 4.0, 0.05 + k * 4.0 + 3.5, 24 + 12 * k, 100 });
+                const int vels[3] = { 30, 64, 127 };
+                for (int k = 0; k < 3; ++k)
+                    evs.push_back ({ 28.05 + k * 3.0, 28.05 + k * 3.0 + 2.5, 60, vels[k] });
+                len = 37.5;
+            }
+            else if (piano)
+            {
+                // A pianist's phrase: a soft-to-loud broken chord (velocity response), a held
+                // chord with a low octave (sustain and decay), a light melody up high and a
+                // final chord left to ring.
+                const int up[4] = { 48, 52, 55, 60 };
+                for (int k = 0; k < 4; ++k)
+                    evs.push_back ({ 0.05 + k * 0.35, 1.6, up[k], 45 + k * 22 });
+                chord (1.7, 4.4, { 36, 48, 55, 60, 64 }, 100);
+                const int mel[5] = { 76, 74, 72, 67, 72 };
+                for (int k = 0; k < 5; ++k)
+                    evs.push_back ({ 4.5 + k * 0.3, 4.5 + k * 0.3 + (k == 4 ? 0.8 : 0.28), mel[k], 70 + (k % 2) * 20 });
+                chord (6.1, 9.6, { 29, 41, 57, 60, 65 }, 90);
+                len = 11.5;
+            }
+            else if (seq && cat == "Bass")
             {
                 evs.push_back ({ 0.05, 3.0, 36, 100 });
                 evs.push_back ({ 3.0, 4.5, 33, 100 });
@@ -505,7 +532,8 @@ int main (int argc, char** argv)
     if (argc > 1 && juce::String (argv[1]) == "--stress-threads")
         return stressThreads (argc > 2 ? juce::String (argv[2]).getDoubleValue() : 10.0, argc > 3 ? juce::String (argv[3]).getIntValue() : 7);
     if (argc > 3 && juce::String (argv[1]) == "--render-pack")
-        return renderPack (juce::File (argv[2]), juce::File (argv[3]), argc > 4 ? juce::String (argv[4]) : juce::String());
+        return renderPack (juce::File (argv[2]), juce::File (argv[3]), argc > 4 ? juce::String (argv[4]) : juce::String(),
+                           argc > 5 && juce::String (argv[5]) == "sweep");
     if (argc > 2 && juce::String (argv[1]) == "--export-pack")
         return exportPacks (juce::File (argv[2]), argc > 3 ? juce::String (argv[3]) : juce::String());
 

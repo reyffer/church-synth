@@ -57,6 +57,9 @@ juce::String pack13Notes (const juce::String& presetName);
 const std::vector<FactoryPreset>& pack14Presets();
 juce::StringArray pack14Tags (const juce::String& presetName);
 juce::String pack14Notes (const juce::String& presetName);
+const std::vector<FactoryPreset>& pack15Presets();
+juce::StringArray pack15Tags (const juce::String& presetName);
+juce::String pack15Notes (const juce::String& presetName);
 
 inline const std::vector<PresetPack>& presetPacks()
 {
@@ -75,6 +78,7 @@ inline const std::vector<PresetPack>& presetPacks()
         { "Pack 12 - EDM", &pack12Presets, &pack12Tags, &pack12Notes },
         { "Pack 13 - Famous Sounds", &pack13Presets, &pack13Tags, &pack13Notes },
         { "Pack 14 - Special FX", &pack14Presets, &pack14Tags, &pack14Notes },
+        { "Pack 15 - Acoustic Pianos", &pack15Presets, &pack15Tags, &pack15Notes },
     };
     return packs;
 }
