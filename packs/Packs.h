@@ -30,6 +30,9 @@ juce::String pack4Notes (const juce::String& presetName);
 const std::vector<FactoryPreset>& pack5Presets();
 juce::StringArray pack5Tags (const juce::String& presetName);
 juce::String pack5Notes (const juce::String& presetName);
+const std::vector<FactoryPreset>& pack6Presets();
+juce::StringArray pack6Tags (const juce::String& presetName);
+juce::String pack6Notes (const juce::String& presetName);
 
 inline const std::vector<PresetPack>& presetPacks()
 {
@@ -39,6 +42,7 @@ inline const std::vector<PresetPack>& presetPacks()
         { "Pack 3 - Electric Pianos", &pack3Presets, &pack3Tags, &pack3Notes },
         { "Pack 4 - Orchestral Strings", &pack4Presets, &pack4Tags, &pack4Notes },
         { "Pack 5 - Brass", &pack5Presets, &pack5Tags, &pack5Notes },
+        { "Pack 6 - Chorus Poly", &pack6Presets, &pack6Tags, &pack6Notes },
     };
     return packs;
 }
