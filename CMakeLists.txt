@@ -120,7 +120,7 @@ if(CS_BUILD_PLUGIN)
     if(CS_BUILD_TESTS)
         # Plugin-level state test: a console app compiling the processor sources directly.
         juce_add_console_app(cs_state_test PRODUCT_NAME "cs_state_test")
-        target_sources(cs_state_test PRIVATE tests/state_test.cpp packs/Pack1.cpp packs/Pack1Notes.cpp packs/Pack2Worship.cpp packs/Pack2Notes.cpp packs/Pack3EPianos.cpp packs/Pack3Notes.cpp packs/Pack4Orchestral.cpp packs/Pack4Notes.cpp packs/Pack5Brass.cpp packs/Pack5Notes.cpp packs/Pack6ChorusPoly.cpp packs/Pack6Notes.cpp packs/Pack7GrandPoly.cpp packs/Pack7Notes.cpp ${CS_PLUGIN_SOURCES})
+        target_sources(cs_state_test PRIVATE tests/state_test.cpp packs/Pack1.cpp packs/Pack1Notes.cpp packs/Pack2Worship.cpp packs/Pack2Notes.cpp packs/Pack3EPianos.cpp packs/Pack3Notes.cpp packs/Pack4Orchestral.cpp packs/Pack4Notes.cpp packs/Pack5Brass.cpp packs/Pack5Notes.cpp packs/Pack6ChorusPoly.cpp packs/Pack6Notes.cpp packs/Pack7GrandPoly.cpp packs/Pack7Notes.cpp packs/Pack8Ladder.cpp packs/Pack8Notes.cpp ${CS_PLUGIN_SOURCES})
         target_include_directories(cs_state_test PRIVATE source .)
         target_compile_definitions(cs_state_test PRIVATE
             JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0
