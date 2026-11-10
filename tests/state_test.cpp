@@ -5,10 +5,16 @@
 #include "plugin/PluginProcessor.h"
 #include "plugin/PresetManager.h"
 #include "dsp/fx/Effects.h"
+#include "dsp/Content.h"
 #include "packs/Packs.h"
 #include "plugin/ui/Help.h"
 
 #include <atomic>
+#include <fstream>
+#include <string>
+#if defined(__GLIBC__)
+ #include <malloc.h>
+#endif
 #include <thread>
 
 #include <cmath>
@@ -200,6 +206,70 @@ static int exportPacks (const juce::File& dir, const juce::String& only = {})
 // --render-pack <exported dir> <wav dir>: one WAV per exported pack preset, with a
 // phrase that suits it (chords for keys/pads, a melody for bells and leads, a held
 // note for bass sequences). For the audition reel.
+// --mem-report: memory per instance. Prints resident memory (Linux /proc) and heap in
+// use (glibc) after creating processors, loading presets and playing them.
+static double rssMB()
+{
+    std::ifstream f ("/proc/self/status");
+    std::string line;
+    while (std::getline (f, line))
+        if (line.rfind ("VmRSS:", 0) == 0)
+            return std::stod (line.substr (6)) / 1024.0;
+    return 0.0;
+}
+static double heapMB()
+{
+#if defined(__GLIBC__)
+    const auto mi = mallinfo2();
+    return (double) mi.uordblks / (1024.0 * 1024.0) + (double) mi.hblkhd / (1024.0 * 1024.0);
+#else
+    return 0.0;
+#endif
+}
+static int memReport (int instances)
+{
+    auto row = [] (const char* what) { std::printf ("%-46s RSS %7.1f MB   heap %7.1f MB\n", what, rssMB(), heapMB()); };
+    row ("start");
+    const auto& fps = factoryPresets();
+    std::vector<std::unique_ptr<ChurchSynthProcessor>> ps;
+    for (int i = 0; i < instances; ++i)
+    {
+        ps.push_back (std::make_unique<ChurchSynthProcessor>());
+        auto& p = *ps.back();
+        p.prepareToPlay (48000.0, 512);
+        playPeak (p, { 48, 52, 55, 60 }, nullptr, 0.5);
+        row (juce::String ("instance " + juce::String (i + 1) + ": init patch, played").toRawUTF8());
+        // A different factory preset per instance (different tables, noises and effects).
+        const auto& fp = fps[(size_t) (i * 7) % fps.size()];
+        PresetBuilder b;
+        fp.build (b);
+        p.restoreStateTree (b.build (fp.name, fp.category), ChurchSynthProcessor::LoadKind::Preset);
+        p.syncEffects();
+        p.prepareToPlay (48000.0, 512);
+        playPeak (p, { 48, 52, 55, 60 }, nullptr, 1.0);
+        row (juce::String ("instance " + juce::String (i + 1) + ": " + fp.name + ", played").toRawUTF8());
+    }
+    {
+        auto& lib = cs::ContentLibrary::get();
+        double before = heapMB();
+        for (int i = 0; i < lib.numFactoryWavetables(); ++i)
+            lib.factoryWavetable (i);
+        std::printf ("\nall %d factory wavetables (shared by all instances): +%.1f MB\n", lib.numFactoryWavetables(), heapMB() - before);
+        before = heapMB();
+        for (int i = 0; i < lib.numFactoryNoises(); ++i)
+            lib.factoryNoise (i);
+        std::printf ("all %d factory noises (shared by all instances): +%.1f MB\n", lib.numFactoryNoises(), heapMB() - before);
+    }
+    std::printf ("\nPer effect (heap, 48 kHz):\n");
+    for (int t = 1; t < cs::fx::FxTypeCount; ++t)
+    {
+        const double before = heapMB();
+        auto e = cs::fx::makeEffect (t, 48000.0f);
+        std::printf ("  %-16s %6.2f MB\n", cs::fx::fxInfo (t).name, heapMB() - before);
+    }
+    return 0;
+}
+
 // With sweep = true it plays a test sweep instead: single notes across the keyboard
 // (C1 to C7, 4 s each, velocity 100), then middle C at velocities 30, 64 and 127.
 static int renderPack (const juce::File& packDir, const juce::File& wavDir, const juce::String& only = {}, bool sweep = false)
@@ -531,6 +601,8 @@ int main (int argc, char** argv)
         return fuzzParams (argc > 2 ? juce::String (argv[2]).getIntValue() : 50);
     if (argc > 1 && juce::String (argv[1]) == "--stress-threads")
         return stressThreads (argc > 2 ? juce::String (argv[2]).getDoubleValue() : 10.0, argc > 3 ? juce::String (argv[3]).getIntValue() : 7);
+    if (argc > 1 && juce::String (argv[1]) == "--mem-report")
+        return memReport (argc > 2 ? juce::String (argv[2]).getIntValue() : 4);
     if (argc > 3 && juce::String (argv[1]) == "--render-pack")
         return renderPack (juce::File (argv[2]), juce::File (argv[3]), argc > 4 ? juce::String (argv[4]) : juce::String(),
                            argc > 5 && juce::String (argv[5]) == "sweep");

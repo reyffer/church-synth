@@ -59,4 +59,5 @@ CI (`.github/workflows/build.yml`): macOS universal AU/VST3/Standalone with auva
 - Benchmark baseline (x86 container, M1 numbers are in CI): analog pad 8 voices ≈ 5.5 %, wavetable pad ≈ 3.5 %, worst case ≈ 29 % of one core. Content generation for everything ≈ 2.4 s total, but only what's selected is generated.
 - Seq/Arp cost is negligible (arp 16ths + delay + reverb on a supersaw ≈ 3 % of a core).
 - FX cost (same container): chorus + delay + reverb ≈ 1.5 % of a core; all 9 slots busy ≈ 8 %. The bench has `pad_fx_*` cases.
+- Memory (`cs_state_test --mem-report [n]`, x86 Linux): each instance ≈ 1.5 MB core + its effects (delays ≈ 1 MB, reverb/shimmer ≈ 0.7 MB, the rest ≈ 0); factory content is shared process-wide and generated only when selected (all 40 tables ≈ 62 MB, all 34 noises ≈ 30 MB).
 - Planned optimisation: process 4 unison sub-voices with SIMD (NEON/SSE), skip silent engines entirely (already done), cheaper sine.
