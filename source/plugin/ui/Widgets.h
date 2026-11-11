@@ -21,6 +21,10 @@ public:
     void selectSource (int s); // toggles
     void clearSource() { if (selectedSource >= 0) { selectedSource = -1; sendChangeMessage(); } }
 
+    // The knob last clicked (its destination): the sources modulating it light up in the strip.
+    int focusedDest = -1;
+    void focusDest (int d) { if (d != focusedDest) { focusedDest = d; sendChangeMessage(); } }
+
     void refreshRoutes(); // re-read from the processor (call when it may have changed)
     const cs::ModRouting& routes() const noexcept { return cached; }
     float routeAmount (int src, int dest) const noexcept;
@@ -59,6 +63,8 @@ public:
     void setValueColour (juce::Colour c) { slider.setColour (juce::Slider::rotarySliderFillColourId, c); }
     void setFormatter (std::function<juce::String (float)> f) { formatter = std::move (f); }
     const juce::String& getParamId() const noexcept { return paramId; }
+    int getDest() const noexcept { return dest; } // modulation destination, or -1
+    juce::Rectangle<float> getDialBounds() const { return dialBounds(); }
     juce::Slider& getSlider() noexcept { return slider; }
 
     void resized() override;
@@ -192,4 +198,32 @@ inline void drawCaption (juce::Graphics& g, juce::Rectangle<int> r, const juce::
     g.setFont (font (11.0f));
     g.drawFittedText (t, r, juce::Justification::centred, 1);
 }
+
+// Visible all the way up to the editor (unlike isShowing(), doesn't need a desktop window,
+// so it also works for off-screen snapshots).
+inline bool visibleInEditor (const juce::Component& c)
+{
+    for (auto* p = &c; p->getParentComponent() != nullptr; p = p->getParentComponent()) // the top level (window) itself isn't checked
+        if (! p->isVisible())
+            return false;
+    return true;
+}
+
+// "Sound LED": lights when a part (engine, oscillator, noise...) is sending sound into
+// the filters; faint when quiet, bright when loud. Reads SynthCore::uiMeter (only
+// measured while the editor is open). Each meter must have a single LED reading it.
+class SoundLed final : public juce::Component, public juce::SettableTooltipClient, private juce::Timer
+{
+public:
+    SoundLed (UiContext& c, int meterIndex, const juce::String& partName);
+    void paint (juce::Graphics&) override;
+    float levelDb() const noexcept { return shownDb; } // for tests
+    void poll(); // read the meter (the timer calls it; tests can too)
+
+private:
+    UiContext& ctx;
+    int meter;
+    float shownDb = -100.0f;
+    void timerCallback() override { poll(); }
+};
 } // namespace ui

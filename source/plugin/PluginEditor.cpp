@@ -2,6 +2,10 @@
 #include "ui/Help.h"
 #include "PresetManager.h"
 
+#include <functional>
+#include <map>
+#include <set>
+
 namespace
 {
 
@@ -218,6 +222,52 @@ void saveScale (float s)
 }
 } // namespace
 
+// Mod section helpers drawn over the whole editor (never takes the mouse): faded lines
+// from the selected source's tile to every knob it modulates on screen, and "+n" badges
+// on the tabs / pages that hide more of its targets.
+struct ModLinks
+{
+    int src = -1;
+    std::vector<std::pair<juce::Point<float>, juce::Rectangle<float>>> lines; // from, knob dial
+    std::vector<std::pair<juce::Rectangle<float>, int>> badges;              // tab / button, count
+    juce::String key; // changes when anything drawn changes
+};
+
+class ModLinksOverlay final : public juce::Component
+{
+public:
+    ModLinksOverlay() { setInterceptsMouseClicks (false, false); }
+    ModLinks links;
+    void paint (juce::Graphics& g) override
+    {
+        if (links.src < 0)
+            return;
+        const auto c = ui::sourceColour (links.src);
+        for (const auto& [from, dial] : links.lines)
+        {
+            const auto to = dial.getCentre();
+            const float dy = (to.y - from.y) * 0.5f;
+            juce::Path p;
+            p.startNewSubPath (from);
+            p.cubicTo (from.x, from.y + dy, to.x, to.y - dy, to.x, to.y);
+            g.setColour (c.withAlpha (0.4f));
+            g.strokePath (p, juce::PathStrokeType (1.6f));
+            g.setColour (c.withAlpha (0.85f));
+            g.drawEllipse (dial.expanded (2.0f), 1.6f);
+        }
+        for (const auto& [r, n] : links.badges)
+        {
+            const juce::String t = "+" + juce::String (n);
+            const auto b = juce::Rectangle<float> (r.getRight() - 22.0f, r.getY() - 5.0f, 20.0f, 13.0f);
+            g.setColour (c);
+            g.fillRoundedRectangle (b, 6.0f);
+            g.setColour (ui::col::bg);
+            g.setFont (ui::font (10.0f, true));
+            g.drawText (t, b, juce::Justification::centred);
+        }
+    }
+};
+
 class ChurchSynthEditor::Root final : public juce::Component
 {
 public:
@@ -227,6 +277,7 @@ public:
         for (auto* comp : std::initializer_list<juce::Component*> { &top, &synth, &fx, &seq, &strip, &tabs, &footer })
             addAndMakeVisible (comp);
         addChildComponent (browser);
+        addAndMakeVisible (linkOverlay);
         fx.setVisible (false);
         seq.setVisible (false);
         top.onPage = [this] (ui::Page p) { showPage (p); };
@@ -280,12 +331,108 @@ public:
 
     void mouseDown (const juce::MouseEvent& e) override
     {
-        if (ctx.selectedSource < 0)
-            return;
+        // A knob click lights up the sources modulating it; anything else clears that.
+        ui::Knob* knob = nullptr;
+        bool inStrip = false;
         for (auto* c = e.eventComponent; c != nullptr && c != this; c = c->getParentComponent())
-            if (dynamic_cast<ui::Knob*> (c) != nullptr || c == &strip)
-                return;
+        {
+            if (knob == nullptr)
+                knob = dynamic_cast<ui::Knob*> (c);
+            inStrip = inStrip || c == &strip;
+        }
+        ctx.focusDest (knob != nullptr ? knob->getDest() : -1);
+        if (ctx.selectedSource < 0 || knob != nullptr || inStrip)
+            return;
         ctx.clearSource();
+    }
+
+    // --- Mod links (see ModLinksOverlay) ---------------------------------------------
+    ModLinks computeLinks()
+    {
+        ModLinks L;
+        const int src = ctx.selectedSource;
+        if (src < 0 || browser.isVisible())
+            return L;
+        L.src = src;
+        const auto tile = getLocalArea (&strip, strip.tileBounds (src)).toFloat();
+        std::set<int> shown;
+        std::function<void (juce::Component&)> walk = [&] (juce::Component& comp) {
+            for (auto* ch : comp.getChildren())
+            {
+                if (ch == &browser || ch == &linkOverlay || ! ch->isVisible())
+                    continue;
+                if (auto* k = dynamic_cast<ui::Knob*> (ch))
+                {
+                    if (k->getDest() >= 0 && ui::visibleInEditor (*k) && ctx.hasRoute (src, k->getDest()))
+                    {
+                        const auto dial = getLocalArea (k, k->getDialBounds());
+                        const juce::Point<float> from (tile.getCentreX(), dial.getCentreY() < tile.getY() ? tile.getY() : tile.getBottom());
+                        L.lines.push_back ({ from, dial });
+                        shown.insert (k->getDest());
+                    }
+                    continue;
+                }
+                walk (*ch);
+            }
+        };
+        walk (*this);
+        // Targets not on screen: count them on the tab or page button that shows them.
+        std::map<juce::String, std::pair<juce::Rectangle<float>, int>> badge;
+        auto addBadge = [&] (const juce::String& where, juce::Rectangle<int> r) {
+            auto& b = badge[where];
+            b.first = r.toFloat();
+            ++b.second;
+        };
+        const auto& dests = cs::modDestinations();
+        const auto& routes = ctx.routes();
+        std::set<int> counted;
+        for (int i = 0; i < routes.count; ++i)
+        {
+            const int d = routes.routes[i].dest;
+            if (routes.routes[i].source != src || d < 0 || d >= (int) dests.size() || shown.count (d) > 0 || ! counted.insert (d).second)
+                continue;
+            const juce::String id (dests[(size_t) d].id);
+            const auto onTop = [this] (ui::Page p) { return getLocalArea (&top, top.pageButtonBounds (p)); };
+            if (id.startsWith ("fx_"))
+            {
+                if (top.page != ui::Page::Fx)
+                    addBadge ("fx", onTop (ui::Page::Fx));
+            }
+            else if (id.startsWith ("seq_"))
+            {
+                if (top.page != ui::Page::Seq)
+                    addBadge ("seq", onTop (ui::Page::Seq));
+            }
+            else if (const int t = id.startsWith ("env") ? 1 : id.startsWith ("lfo") ? 2 : id.startsWith ("func") ? 3
+                                 : id.startsWith ("rand") ? 4 : id.startsWith ("comb") ? 5 : -1; t >= 0)
+            {
+                if (tabs.currentTab() != t)
+                    addBadge ("tab" + juce::String (t), getLocalArea (&tabs, tabs.tabBounds (t)));
+            }
+            else if (top.page != ui::Page::Synth)
+                addBadge ("synth", onTop (ui::Page::Synth));
+            else if (const int e = id.startsWith ("e1_") ? 0 : id.startsWith ("e2_") ? 1 : id.startsWith ("u_") ? 2 : -1;
+                     e >= 0 && synth.engineTab() != e)
+                addBadge ("eng" + juce::String (e), getLocalArea (&synth, synth.engineTabBounds (e)));
+        }
+        for (const auto& [where, b] : badge)
+            L.badges.push_back (b);
+        L.key << src << ":";
+        for (const auto& [from, dial] : L.lines)
+            L.key << (int) dial.getX() << "," << (int) dial.getY() << ";";
+        for (const auto& [r, n] : L.badges)
+            L.key << (int) r.getX() << "," << (int) r.getY() << "x" << n << ";";
+        return L;
+    }
+
+    void updateLinks()
+    {
+        auto L = computeLinks();
+        if (L.key != linkOverlay.links.key)
+        {
+            linkOverlay.links = std::move (L);
+            linkOverlay.repaint();
+        }
     }
 
     void resized() override
@@ -297,6 +444,7 @@ public:
         tabs.setBounds (2, 500, kW - 4, 270);
         footer.setBounds (0, kH - 28, kW, 28);
         browser.setBounds (0, 44, kW, kH - 44 - 28);
+        linkOverlay.setBounds (getLocalBounds());
     }
 
     void paint (juce::Graphics& g) override { g.fillAll (ui::col::bg); }
@@ -320,6 +468,7 @@ public:
             browser.refresh();
             browser.toFront (true);
             browser.grabKeyboardFocus();
+            updateLinks();
         }
         top.refresh();
     }
@@ -346,6 +495,7 @@ public:
 
     void tick (bool slow)
     {
+        updateLinks();
         top.tickMeter();
         strip.tick();
         tabs.tick();
@@ -364,6 +514,7 @@ public:
     ui::ModTabs tabs;
     ui::Footer footer;
     ui::PresetBrowser browser;
+    ModLinksOverlay linkOverlay;
 };
 
 ChurchSynthEditor::ChurchSynthEditor (ChurchSynthProcessor& p) : AudioProcessorEditor (p), proc (p), ctx (p)
@@ -451,6 +602,35 @@ bool ChurchSynthEditor::keyPressed (const juce::KeyPress& k)
         return true;
     }
     return false;
+}
+
+void ChurchSynthEditor::tickForTest()
+{
+    timerCallback();
+    std::function<void (juce::Component&)> walk = [&walk] (juce::Component& c) {
+        for (auto* ch : c.getChildren())
+        {
+            if (auto* led = dynamic_cast<ui::SoundLed*> (ch))
+                led->poll();
+            walk (*ch);
+        }
+    };
+    walk (*this);
+}
+
+void ChurchSynthEditor::selectModSource (int source, int focusedDest)
+{
+    if (source < 0)
+        ctx.clearSource();
+    else if (ctx.selectedSource != source)
+        ctx.selectSource (source);
+    ctx.focusDest (focusedDest);
+}
+
+void ChurchSynthEditor::showBrowserView (int bank, const juce::String& folder, bool allTags)
+{
+    root->showBrowser (true);
+    root->browser.setView (bank, folder, allTags);
 }
 
 void ChurchSynthEditor::showView (int view, int modTab, int engineTab)

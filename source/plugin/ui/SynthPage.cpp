@@ -123,6 +123,7 @@ public:
     AnalogView (UiContext& c, int engine) : ControlPanel (c), e (engine)
     {
         const juce::String x = "e" + juce::String (e + 1) + "_";
+        const int meterBase = e == 0 ? cs::MeterE1Osc1 : cs::MeterE2Osc1;
         buildTuneColumn (*this, ctx, e, false,
                          [this] (auto& id, auto& l, auto r) -> Knob& { return knob (id, l, r); },
                          [this] (auto& id, auto s, auto& t, auto r) -> Toggle& { return toggle (id, s, t, r); },
@@ -134,15 +135,16 @@ public:
         {
             const juce::String op = x + "o" + juce::String (o + 1) + "_";
             const int y = 4 + o * 102, bx = 140;
-            title ({ bx + 8, y + 6, 120, 16 }, "Oscillator " + juce::String (o + 1));
+            add<SoundLed> ({ bx + 6, y + 7, 14, 14 }, ctx, meterBase + o, "Oscillator " + juce::String (o + 1));
+            title ({ bx + 22, y + 6, 80, 16 }, "Oscillator " + juce::String (o + 1));
             knob (op + "coarse", "Coarse", { bx + 6, y + 26, 54, 66 }).setFormatter ([] (float v) { return juce::String ((int) std::lround (v)) + " st"; });
             if (o > 0)
             {
                 knob (op + "fine", "Fine", { bx + 62, y + 26, 54, 66 });
-                toggle (op + "kbd", Toggle::TextPill, "kbd", { bx + 100, y + 6, 36, 16 }).setTooltip ("Key tracking");
+                toggle (op + "kbd", Toggle::TextPill, "kbd", { bx + 104, y + 6, 36, 16 }).setTooltip ("Key tracking");
             }
             if (o == 1)
-                toggle (x + "sync", Toggle::TextPill, "sync", { bx + 140, y + 6, 44, 16 }).setTooltip ("Hard sync Osc 2 to Osc 1");
+                toggle (x + "sync", Toggle::TextPill, "sync", { bx + 144, y + 6, 44, 16 }).setTooltip ("Hard sync Osc 2 to Osc 1");
             add<OscDisplay> ({ bx + 124, y + 24, 160, 46 }, ctx, op + "wave", op + "width", op + "vol");
             add<WaveSelector> ({ bx + 124, y + 72, 160, 22 }, ctx, op + "wave");
             widths[o] = &knob (op + "width", "Width", { bx + 290, y + 26, 54, 66 });
@@ -152,7 +154,8 @@ public:
                 knob (op + "fm", "FM", { bx + 404, y + 30, 46, 58 }).setTooltip (o == 0 ? "Osc 3 / Noise FMs Osc 1" : "Osc 3 / Noise FMs Osc 2");
         }
         const int rx = 610;
-        title ({ rx + 6, 6, 80, 16 }, "Noise");
+        add<SoundLed> ({ rx + 4, 7, 14, 14 }, ctx, meterBase + 3, "the noise");
+        title ({ rx + 20, 6, 80, 16 }, "Noise");
         knob (x + "noise_color", "Colour", { rx + 4, 26, 56, 66 });
         knob (x + "noise_vol", "Volume", { rx + 62, 26, 56, 66 });
         title ({ rx + 6, 104, 80, 16 }, "Output");
@@ -225,6 +228,7 @@ public:
                 ctx.proc.clearUserFile (e);
         };
         tableRef = &table;
+        add<SoundLed> ({ bx + 242, 9, 14, 14 }, ctx, e == 0 ? cs::MeterE1Osc1 : cs::MeterE2Osc1, "the wavetable oscillator");
         table.displayName = [this] (int) { return ctx.proc.getSlotDisplayName (e).fromFirstOccurrenceOf (": ", false, false); };
         add<WavetableDisplay> ({ bx + 8, 30, 300, 156 }, ctx, e);
         knob (w + "pos", "Position", { bx + 314, 28, 70, 78 }).setValueColour (col::accent);
@@ -252,7 +256,8 @@ public:
         title ({ rx + 128, 6, 100, 16 }, "Start phase");
         pill (w + "retrig", { rx + 128, 26, 100, 18 });
         knob (w + "phase", "Phase", { rx + 150, 48, 56, 60 });
-        title ({ rx + 6, 118, 160, 16 }, "Modulator Osc");
+        add<SoundLed> ({ rx + 4, 119, 14, 14 }, ctx, e == 0 ? cs::MeterE1Osc2 : cs::MeterE2Osc2, "the modulator oscillator (heard through its Volume)");
+        title ({ rx + 20, 118, 160, 16 }, "Modulator Osc");
         pill (w + "mod_tune_mode", { rx + 8, 140, 100, 18 });
         pill (w + "mod_wave", { rx + 114, 140, 108, 18 });
         tuneCoarse = &knob (w + "mod_coarse", "Coarse", { rx + 4, 166, 56, 66 });
@@ -322,7 +327,8 @@ public:
             const juce::String p = "u_n" + juce::String (n + 1) + "_";
             const int bx = n * 300;
             toggle (p + "on", Toggle::Power, {}, { bx + 10, 8, 16, 16 });
-            title ({ bx + 32, 8, 100, 16 }, "Noise " + juce::String (n + 1));
+            add<SoundLed> ({ bx + 30, 9, 14, 14 }, ctx, cs::MeterUtilNoise1 + n, "Noise " + juce::String (n + 1));
+            title ({ bx + 46, 8, 100, 16 }, "Noise " + juce::String (n + 1));
             auto& sample = pill (p + "type", { bx + 10, 32, 278, 20 });
             const int slot = ChurchSynthProcessor::Noise1 + n;
             sample.displayName = [this, slot] (int) { return ctx.proc.getSlotDisplayName (slot); };
@@ -348,7 +354,8 @@ public:
         }
         const int bx = 604;
         toggle ("u_osc_on", Toggle::Power, {}, { bx + 6, 8, 16, 16 });
-        title ({ bx + 28, 8, 120, 16 }, "Oscillator");
+        add<SoundLed> ({ bx + 26, 9, 14, 14 }, ctx, cs::MeterUtilOsc, "the Utility oscillator");
+        title ({ bx + 42, 8, 120, 16 }, "Oscillator");
         add<OscDisplay> ({ bx + 6, 32, 164, 44 }, ctx, "u_osc_wave", "u_osc_width", "u_osc_vol");
         add<WaveSelector> ({ bx + 6, 78, 164, 20 }, ctx, "u_osc_wave");
         knob ("u_osc_coarse", "Coarse", { bx + 2, 104, 56, 66 }).setFormatter ([] (float v) { return juce::String ((int) std::lround (v)) + " st"; });
@@ -421,6 +428,11 @@ public:
         addChildComponent (*utility);
         power[2] = std::make_unique<Toggle> (ctx, "u_on", Toggle::Power);
         addAndMakeVisible (*power[2]);
+        leds[0] = std::make_unique<SoundLed> (ctx, cs::MeterEngine1, "Engine 1");
+        leds[1] = std::make_unique<SoundLed> (ctx, cs::MeterEngine2, "Engine 2");
+        leds[2] = std::make_unique<SoundLed> (ctx, cs::MeterUtility, "the Utility engine");
+        for (auto& l : leds)
+            addAndMakeVisible (*l);
         refreshView();
     }
 
@@ -430,6 +442,8 @@ public:
             if (tabRect (t).contains (e.getPosition()))
                 show (t);
     }
+
+    int currentTab() const noexcept { return current; }
 
     void show (int t)
     {
@@ -452,6 +466,7 @@ public:
             power[t]->setBounds (r.getX() + 10, 8, 15, 15);
             if (t < 2)
                 type[t]->setBounds (r.getX() + 130, 6, 110, 19);
+            leds[t]->setBounds (t < 2 ? r.getX() + 250 : r.getX() + 160, 8, 14, 14);
         }
         const auto content = getLocalBounds().withTrimmedTop (30);
         for (int e = 0; e < 2; ++e)
@@ -507,6 +522,7 @@ private:
     std::unique_ptr<UtilityView> utility;
     std::unique_ptr<Toggle> power[3];
     std::unique_ptr<Pill> type[2];
+    std::unique_ptr<SoundLed> leds[3];
 };
 
 // ===========================================================================
@@ -701,6 +717,16 @@ void SynthPage::paint (juce::Graphics&) {}
 void SynthPage::showEngineTab (int t)
 {
     engines->show (t);
+}
+
+int SynthPage::engineTab() const
+{
+    return engines->currentTab();
+}
+
+juce::Rectangle<int> SynthPage::engineTabBounds (int t) const
+{
+    return engines->tabRect (t) + engines->getPosition();
 }
 
 void SynthPage::refreshView()

@@ -69,6 +69,8 @@ public:
     void paint (juce::Graphics&) override;
     void refreshView() override;
     void showEngineTab (int t);
+    int engineTab() const;                          // 0, 1 = engines, 2 = utility
+    juce::Rectangle<int> engineTabBounds (int t) const; // in this component
 
 private:
     class EngineTabs;

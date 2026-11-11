@@ -68,7 +68,21 @@ public:
     static juce::StringArray parseTags (const juce::String& commaList);
 
     bool isFavourite (const PresetInfo& p) const { return favourites.count (p.key()) > 0; }
-    void setFavourite (const PresetInfo& p, bool fav);
+    void setFavourite (const PresetInfo& p, bool fav); // un-favouriting also takes it out of every folder
+
+    // Favourite folders work like playlists: a preset can be in several. Putting a preset
+    // in a folder also makes it a favourite. Kept in "Favourite Folders.xml".
+    juce::StringArray favouriteFolders() const;                    // sorted
+    bool isInFavouriteFolder (const PresetInfo& p, const juce::String& folder) const;
+    void setInFavouriteFolder (const PresetInfo& p, const juce::String& folder, bool in);
+    bool addFavouriteFolder (const juce::String& name);            // false if it exists
+    bool renameFavouriteFolder (const juce::String& from, const juce::String& to);
+    void deleteFavouriteFolder (const juce::String& name);         // presets stay favourites
+
+    // A user preset's folder relative to the Presets folder, with '/' separators
+    // ("" for presets directly in it). Factory presets: "".
+    static juce::String userSubfolder (const PresetInfo& p);
+    juce::StringArray userSubfolders();                            // every folder that holds presets, and its parents, sorted
 
     // Writes the current sound as a preset tree (no MIDI mappings).
     juce::ValueTree currentAsPresetTree (const juce::String& name, const juce::String& category,
@@ -105,6 +119,7 @@ private:
     std::vector<PresetInfo> list;
     bool scanned = false;
     std::set<juce::String> favourites;
+    std::map<juce::String, std::set<juce::String>> favFolders; // folder -> preset keys
     std::map<juce::String, juce::StringArray> tagEdits; // preset key -> tags chosen by the user
     // Remembered renames / deletes, applied to the tags of presets that arrive later
     // (new pack files, other machines), so the user's tag scheme stays coherent.
@@ -116,6 +131,8 @@ private:
     void loadTagEdits();
     void saveTagEdits() const;
     void saveFavourites() const;
+    void loadFavouriteFolders();
+    void saveFavouriteFolders() const;
 };
 
 // --- Factory content built in code -------------------------------------------------

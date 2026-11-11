@@ -659,4 +659,51 @@ void FlatButton::paint (juce::Graphics& g)
         g.drawFittedText (text, r.toNearestInt().reduced (3, 0), justification, 1, 0.7f);
     }
 }
+
+// ===========================================================================
+SoundLed::SoundLed (UiContext& c, int meterIndex, const juce::String& partName) : ctx (c), meter (meterIndex)
+{
+    setTooltip ("Sound LED: lights when " + partName + " is making sound (faint = quiet, bright = loud). "
+                "It shows what goes into the filters, so a closed filter can still hide it.");
+    setInterceptsMouseClicks (true, false);
+    startTimerHz (30);
+}
+
+void SoundLed::poll()
+{
+    if (! visibleInEditor (*this)) // a hidden twin (the other engine type's view) must not take the reading
+        return;
+    const float peak = ctx.proc.getSynth().uiMeter[juce::jlimit (0, cs::NumMeters - 1, meter)].exchange (0.0f, std::memory_order_relaxed);
+    const float db = peak > 1.0e-6f ? 20.0f * std::log10 (peak) : -120.0f;
+    // Instant rise, ~40 dB/s fall, so short notes still blink visibly.
+    const float next = std::max (db, shownDb - 1.4f);
+    if (std::abs (next - shownDb) > 0.05f && (next > -60.0f || shownDb > -60.0f))
+    {
+        shownDb = next;
+        repaint();
+    }
+    else
+        shownDb = next;
+}
+
+void SoundLed::paint (juce::Graphics& g)
+{
+    const auto r = getLocalBounds().toFloat().withSizeKeepingCentre (9.0f, 9.0f);
+    // -54 dB (barely there) .. -6 dB (loud) -> 0..1
+    const float b = juce::jlimit (0.0f, 1.0f, (shownDb + 54.0f) / 48.0f);
+    g.setColour (col::panelLo);
+    g.fillEllipse (r);
+    if (shownDb > -54.0f)
+    {
+        if (b > 0.5f) // a soft glow when loud
+        {
+            g.setColour (col::led.withAlpha ((b - 0.5f) * 0.5f));
+            g.fillEllipse (r.expanded (2.5f));
+        }
+        g.setColour (col::led.withAlpha (0.18f + 0.82f * b));
+        g.fillEllipse (r);
+    }
+    g.setColour (shownDb > -54.0f ? col::led.withAlpha (0.5f + 0.5f * b) : col::border.brighter (0.2f));
+    g.drawEllipse (r, 1.0f);
+}
 } // namespace ui

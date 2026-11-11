@@ -30,6 +30,56 @@ void fillUnder (juce::Graphics& g, const juce::Path& line, juce::Rectangle<float
     g.setGradientFill (juce::ColourGradient (c.withAlpha (0.35f), r.getCentreX(), r.getY(), c.withAlpha (0.02f), r.getCentreX(), r.getBottom(), false));
     g.fillPath (area);
 }
+
+// Travelling dots: where each sounding voice is in an envelope / LFO / function.
+// kind 0 = envelope (position = stage + progress), 1 = LFO phase, 2 = function position.
+struct VoiceDot
+{
+    float pos = 0.0f, level = 0.0f;
+};
+std::vector<VoiceDot> voiceDots (UiContext& ctx, int kind, int k)
+{
+    struct Tmp { int age; VoiceDot d; };
+    std::vector<Tmp> t;
+    const auto& synth = ctx.proc.getSynth();
+    for (const auto& u : synth.uiVoice)
+    {
+        const int age = u.age.load (std::memory_order_relaxed);
+        if (age < 0)
+            continue;
+        VoiceDot d;
+        d.pos = kind == 0 ? u.env[k].load (std::memory_order_relaxed) : kind == 1 ? u.lfo[k].load (std::memory_order_relaxed)
+                                                                                  : u.func[k].load (std::memory_order_relaxed);
+        if (kind == 0)
+            d.level = u.envLevel[k].load (std::memory_order_relaxed);
+        if (d.pos < 0.0f || ! std::isfinite (d.pos))
+            continue;
+        t.push_back ({ age, d });
+    }
+    std::sort (t.begin(), t.end(), [] (const Tmp& a, const Tmp& b) { return a.age < b.age; }); // oldest first, newest last
+    std::vector<VoiceDot> r;
+    for (const auto& x : t)
+    {
+        // Global LFOs / functions report the same position on every voice: draw it once.
+        bool dup = false;
+        for (auto& y : r)
+            if (std::abs (y.pos - x.d.pos) < 0.002f && std::abs (y.level - x.d.level) < 0.002f)
+                dup = true;
+        if (! dup)
+            r.push_back (x.d);
+    }
+    return r;
+}
+
+// Newest voice: a bright white dot; older voices: fainter and smaller.
+void drawDot (juce::Graphics& g, juce::Point<float> p, bool newest)
+{
+    const float rad = newest ? 4.5f : 3.2f;
+    g.setColour (juce::Colours::black.withAlpha (0.35f));
+    g.fillEllipse (p.x - rad - 1.0f, p.y - rad - 1.0f, (rad + 1.0f) * 2.0f, (rad + 1.0f) * 2.0f);
+    g.setColour (juce::Colours::white.withAlpha (newest ? 1.0f : 0.5f));
+    g.fillEllipse (p.x - rad, p.y - rad, rad * 2.0f, rad * 2.0f);
+}
 } // namespace
 
 void drawWave (juce::Graphics& g, juce::Rectangle<float> r, int wave, float width, juce::Colour c, float thickness, bool fill)
@@ -378,6 +428,27 @@ void EnvDisplay::paint (juce::Graphics& g)
     fillUnder (g, path, r, r.getBottom(), colourUsed);
     g.setColour (colourUsed);
     g.strokePath (path, juce::PathStrokeType (1.6f));
+    // Travelling dots: where each sounding note is in this envelope.
+    {
+        const int k = juce::jlimit (0, 2, p.getTrailingIntValue() - 1);
+        const auto dots = voiceDots (ctx, 0, k);
+        for (size_t i = 0; i < dots.size(); ++i)
+        {
+            const float pos = dots[i].pos;
+            const int stage = (int) std::floor (pos);
+            const float t = pos - (float) stage;
+            float dx = r.getX();
+            if (stage == 0)
+                dx += t * wa * sx;
+            else if (stage == 1)
+                dx += (wa + t * wd) * sx;
+            else if (stage == 2)
+                dx += (wa + wd + 0.5f * wh) * sx;
+            else
+                dx += (wa + wd + wh + t * wr) * sx;
+            drawDot (g, { dx, yOf (juce::jlimit (0.0f, 1.0f, dots[i].level)) }, i + 1 == dots.size());
+        }
+    }
     // Points (draggable)
     points[0] = { r.getX() + wa * sx, yOf (1.0f) };
     points[1] = { r.getX() + (wa + wd) * sx, yOf (sus) };
@@ -409,6 +480,7 @@ void LfoDisplay::paint (juce::Graphics& g)
     float held = 0.0f;
     juce::Path path;
     const int n = 160;
+    float ys[n + 1] {};
     for (int i = 0; i <= n; ++i)
     {
         const float ph = (float) i / n;
@@ -430,6 +502,7 @@ void LfoDisplay::paint (juce::Graphics& g)
         if (! bipolar)
             v = 0.5f + 0.5f * v;
         const float y = bipolar ? r.getCentreY() - v * r.getHeight() * 0.48f : r.getBottom() - v * r.getHeight() * 0.96f;
+        ys[i] = y;
         const float x = r.getX() + ph * r.getWidth();
         if (i == 0)
             path.startNewSubPath (x, y);
@@ -441,11 +514,20 @@ void LfoDisplay::paint (juce::Graphics& g)
     fillUnder (g, path, r, bipolar ? r.getCentreY() : r.getBottom(), col::modLfo);
     g.setColour (col::modLfo);
     g.strokePath (path, juce::PathStrokeType (1.6f));
-    // Live value
-    const float live = ctx.proc.getSynth().uiSource[cs::SrcLfo1 + k].load (std::memory_order_relaxed);
-    const float ly = bipolar ? r.getCentreY() - live * r.getHeight() * 0.48f : r.getBottom() - live * r.getHeight() * 0.96f;
-    g.setColour (col::modLfo.brighter (0.4f));
-    g.fillEllipse (r.getRight() - 5.0f, ly - 3.0f, 6.0f, 6.0f);
+    // Travelling dots (one per sounding note, or one for a shared LFO); otherwise the live value.
+    const auto dots = voiceDots (ctx, 1, k);
+    for (size_t i = 0; i < dots.size(); ++i)
+    {
+        const float ph = juce::jlimit (0.0f, 1.0f, dots[i].pos);
+        drawDot (g, { r.getX() + ph * r.getWidth(), ys[juce::jlimit (0, n, (int) std::lround (ph * n))] }, i + 1 == dots.size());
+    }
+    if (dots.empty())
+    {
+        const float live = ctx.proc.getSynth().uiSource[cs::SrcLfo1 + k].load (std::memory_order_relaxed);
+        const float ly = bipolar ? r.getCentreY() - live * r.getHeight() * 0.48f : r.getBottom() - live * r.getHeight() * 0.96f;
+        g.setColour (col::modLfo.brighter (0.4f));
+        g.fillEllipse (r.getRight() - 5.0f, ly - 3.0f, 6.0f, 6.0f);
+    }
 }
 
 // ===========================================================================
@@ -506,10 +588,19 @@ void FunctionEditor::paint (juce::Graphics& g)
         const auto pt = toScreen (s.x[s.sustain], 0.0f);
         g.drawVerticalLine ((int) pt.x, r.getY(), r.getBottom());
     }
-    // Live position isn't known per voice; show the output level instead.
-    const float live = ctx.proc.getSynth().uiSource[cs::SrcFunc1 + k].load (std::memory_order_relaxed);
-    g.setColour (col::modFunc.brighter (0.5f));
-    g.fillEllipse (r.getRight() - 4.0f, r.getBottom() - juce::jlimit (0.0f, 1.0f, live) * r.getHeight() - 3.0f, 6.0f, 6.0f);
+    // Travelling dots (one per sounding note, or one for a shared function); otherwise the output level.
+    const auto dots = voiceDots (ctx, 2, k);
+    for (size_t i = 0; i < dots.size(); ++i)
+    {
+        const float x = juce::jlimit (0.0f, 1.0f, dots[i].pos);
+        drawDot (g, toScreen (x, s.eval (x)), i + 1 == dots.size());
+    }
+    if (dots.empty())
+    {
+        const float live = ctx.proc.getSynth().uiSource[cs::SrcFunc1 + k].load (std::memory_order_relaxed);
+        g.setColour (col::modFunc.brighter (0.5f));
+        g.fillEllipse (r.getRight() - 4.0f, r.getBottom() - juce::jlimit (0.0f, 1.0f, live) * r.getHeight() - 3.0f, 6.0f, 6.0f);
+    }
 }
 
 void FunctionEditor::makeCustom (const cs::FunctionShape& s, bool record)

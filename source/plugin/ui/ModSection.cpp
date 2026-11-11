@@ -45,7 +45,8 @@ public:
     {
         scope.setInterceptsMouseClicks (false, false);
         addAndMakeVisible (scope);
-        setTooltip (juce::String (cs::modSourceName (src)) + ": click to select (then drag knobs to set amounts), or drag onto a knob");
+        setTooltip (juce::String (cs::modSourceName (src)) + ": click to select (lines show the knobs it moves; drag knobs to set amounts), "
+                    "or drag onto a knob. The small dot means it's routed somewhere.");
         setMouseCursor (juce::MouseCursor::PointingHandCursor);
     }
     void resized() override { scope.setBounds (getLocalBounds().withTrimmedTop (22).reduced (3, 4)); }
@@ -61,10 +62,24 @@ public:
             g.setColour (sourceColour (src));
             g.drawRect (r, 1.5f);
         }
+        // The knob last clicked is modulated by this source: light the tile up.
+        if (ctx.focusedDest >= 0 && ctx.hasRoute (src, ctx.focusedDest))
+        {
+            g.setColour (sourceColour (src).withAlpha (0.18f));
+            g.fillRect (r);
+            g.setColour (sourceColour (src));
+            g.drawRect (r, 2.0f);
+        }
+        // Small dot: this source is routed somewhere.
+        if (used)
+        {
+            g.setColour (sourceColour (src));
+            g.fillEllipse (r.getRight() - 9.0f, 4.0f, 5.0f, 5.0f);
+        }
         g.setColour (used || sel ? sourceColour (src) : col::textDim);
         g.setFont (font (11.5f, true));
         const juce::String name = src >= cs::SrcMacro1 ? juce::String ("M ") + juce::String (src - cs::SrcMacro1 + 1) : juce::String (kShortNames[src]);
-        g.drawFittedText (name, getLocalBounds().removeFromTop (22).reduced (2, 0), juce::Justification::centred, 1, 0.7f);
+        g.drawFittedText (name, getLocalBounds().removeFromTop (22).reduced (9, 0), juce::Justification::centred, 1, 0.7f);
     }
     void mouseDrag (const juce::MouseEvent& e) override
     {
@@ -125,6 +140,11 @@ ModStrip::~ModStrip()
     ctx.removeChangeListener (this);
 }
 
+juce::Rectangle<int> ModStrip::tileBounds (int source) const
+{
+    return source >= 0 && source < (int) tiles.size() ? tiles[(size_t) source]->getBounds() : juce::Rectangle<int>();
+}
+
 void ModStrip::resized()
 {
     const float w = (float) getWidth() / (float) cs::NumModSources;
@@ -179,7 +199,7 @@ public:
             const juce::String p = "env" + juce::String (k + 1);
             const int bx = 8 + k * 350;
             title ({ bx + 6, 6, 120, 16 }, names[k]);
-            add<EnvDisplay> ({ bx + 4, 26, 330, 84 }, ctx, p, col::modEnv);
+            displays[k] = &add<EnvDisplay> ({ bx + 4, 26, 330, 84 }, ctx, p, col::modEnv);
             for (auto* kn : { &knob (p + "_a", "Attack", { bx, 114, 60, 66 }), &knob (p + "_d", "Decay", { bx + 64, 114, 60, 66 }),
                               &knob (p + "_s", "Sustain", { bx + 128, 114, 60, 66 }), &knob (p + "_r", "Release", { bx + 192, 114, 60, 66 }),
                               &knob (p + "_acurve", "Att Curve", { bx, 178, 60, 60 }), &knob (p + "_dcurve", "Dec Curve", { bx + 64, 178, 60, 60 }) })
@@ -193,6 +213,17 @@ public:
             }
         }
     }
+    void tick() // travelling dots (repaint while notes sound, and once after)
+    {
+        const bool playing = ctx.proc.getSynth().uiVoices.load (std::memory_order_relaxed) > 0;
+        if (playing || wasPlaying)
+            for (auto* d : displays)
+                if (d != nullptr)
+                    d->repaint();
+        wasPlaying = playing;
+    }
+    EnvDisplay* displays[3] {};
+    bool wasPlaying = false;
     void paint (juce::Graphics& g) override
     {
         g.setColour (col::border);
@@ -591,6 +622,8 @@ void ModTabs::tick()
         static_cast<RandomPage*> (pages[4].get())->tick();
     if (current == 5)
         static_cast<CombinatePage*> (pages[5].get())->tick();
+    if (current == 1) // envelopes: travelling dots
+        static_cast<EnvelopesPage*> (pages[1].get())->tick();
     if (current == 2 || current == 3)
         pages[(size_t) current]->refreshView();
 }

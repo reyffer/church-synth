@@ -2,12 +2,68 @@
 
 #include "../PresetManager.h"
 
+#include <optional>
+
 namespace ui
 {
 namespace
 {
 const char* const kBanks[4] = { "All presets", "Factory", "User", "Favourites" };
+const juce::String kToggleChip = "\x01toggle"; // the "Show all tags" / "Show fewer" chip
+constexpr int kTopTags = 12;                     // tags shown while collapsed
 }
+
+class PresetBrowser::SideList final : public juce::Component
+{
+public:
+    explicit SideList (PresetBrowser& b) : owner (b) {}
+    void paint (juce::Graphics& g) override
+    {
+        for (const auto& r : owner.side)
+        {
+            if (r.kind == SideRow::Heading)
+            {
+                drawSectionTitle (g, r.bounds, r.label, col::gold);
+                continue;
+            }
+            const bool sel = owner.sideSelected (r);
+            const bool sub = r.kind == SideRow::UserFolder || r.kind == SideRow::FavFolder || r.kind == SideRow::NewFavFolder;
+            auto rr = r.bounds.withTrimmedLeft (sub ? 10 + r.depth * 12 : 0);
+            g.setColour (sel ? col::accentDim : (sub ? col::panelLo : col::panel));
+            g.fillRoundedRectangle (rr.toFloat(), 4.0f);
+            g.setColour (r.kind == SideRow::NewFavFolder ? col::textDim : (sel ? juce::Colours::white : col::text));
+            g.setFont (font (sub ? 12.0f : 13.0f));
+            auto tr = rr.reduced (8, 0);
+            if (r.count > 0)
+            {
+                g.setColour (sel ? juce::Colours::white.withAlpha (0.7f) : col::textFaint);
+                g.setFont (font (11.0f));
+                g.drawText (juce::String (r.count), tr.removeFromRight (34), juce::Justification::centredRight);
+                g.setColour (r.kind == SideRow::NewFavFolder ? col::textDim : (sel ? juce::Colours::white : col::text));
+                g.setFont (font (sub ? 12.0f : 13.0f));
+            }
+            juce::String label = r.label;
+            if (r.kind == SideRow::Bank && (r.index == 2 || r.index == 3))
+                label = juce::String (owner.bank == r.index ? "- " : "+ ") + label; // expands into folders
+            g.drawFittedText (label, tr, juce::Justification::centredLeft, 1, 0.8f);
+        }
+    }
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        for (const auto& r : owner.side)
+            if (r.kind != SideRow::Heading && r.bounds.contains (e.getPosition()))
+            {
+                const auto copy = r; // the click may rebuild the list
+                owner.sideClicked (copy, e);
+                return;
+            }
+    }
+
+private:
+    PresetBrowser& owner;
+};
+
+PresetBrowser::~PresetBrowser() = default;
 
 PresetBrowser::PresetBrowser (UiContext& c) : ctx (c)
 {
@@ -19,12 +75,18 @@ PresetBrowser::PresetBrowser (UiContext& c) : ctx (c)
     list.setRowHeight (26);
     list.setColour (juce::ListBox::backgroundColourId, col::panelLo);
     addAndMakeVisible (list);
+    sideList = std::make_unique<SideList> (*this);
+    sideView.setViewedComponent (sideList.get(), false);
+    sideView.setScrollBarsShown (true, false);
+    sideView.setScrollBarThickness (6);
+    addAndMakeVisible (sideView);
     close.text = "Close";
     init.text = "Init";
     save.text = "Save";
     saveAsBtn.text = "Save As...";
     del.text = "Delete";
-    favBtn.text = "Favourite";
+    favBtn.text = "Favourite...";
+    favBtn.setTooltip ("Make this preset a favourite, or put it in one or more favourite folders");
     notes.setMultiLine (true, true);
     notes.setReadOnly (true);
     notes.setScrollbarsShown (true);
@@ -63,12 +125,7 @@ PresetBrowser::PresetBrowser (UiContext& c) : ctx (c)
                                                 }
                                             }));
     };
-    favBtn.onClick = [this] {
-        auto& pm = ctx.proc.presets();
-        const auto info = pm.currentInfo();
-        pm.setFavourite (info, ! pm.isFavourite (info));
-        refresh();
-    };
+    favBtn.onClick = [this] { showFavouriteMenu (ctx.proc.presets().currentInfo(), &favBtn); };
     for (auto* b : { &close, &init, &save, &saveAsBtn, &del, &favBtn, &rescanBtn, &tagsBtn })
         addAndMakeVisible (b);
     setWantsKeyboardFocus (true);
@@ -84,6 +141,10 @@ void PresetBrowser::refresh()
         for (int i = activeTags.size(); --i >= 0;) // drop filters for tags that no longer exist
             if (! tags.contains (activeTags[i], true))
                 activeTags.remove (i);
+        if (favFolder.isNotEmpty() && ! pm.favouriteFolders().contains (favFolder))
+            favFolder = {};
+        if (userFolder.isNotEmpty() && ! pm.userSubfolders().contains (userFolder))
+            userFolder = {};
     }
     const auto q = search.getText().trim().toLowerCase();
     rows.clear();
@@ -92,7 +153,13 @@ void PresetBrowser::refresh()
         const auto& p = all[i];
         if (bank == 1 && ! p.factory) continue;
         if (bank == 2 && p.factory) continue;
+        if (bank == 2 && userFolder.isNotEmpty())
+        {
+            const auto f = PresetManager::userSubfolder (p);
+            if (f != userFolder && ! f.startsWith (userFolder + "/")) continue;
+        }
         if (bank == 3 && ! pm.isFavourite (p)) continue;
+        if (bank == 3 && favFolder.isNotEmpty() && ! pm.isInFavouriteFolder (p, favFolder)) continue;
         if (category >= 0 && p.category != PresetManager::categories()[category]) continue;
         bool hasTags = true;
         for (const auto& t : activeTags)
@@ -116,22 +183,52 @@ void PresetBrowser::refresh()
     notes.setText (info.notes.isNotEmpty() ? info.notes : juce::String ("No notes for this preset yet."), false);
     favBtn.lit = pm.isFavourite (info);
     favBtn.repaint();
+    rebuildSide();
     resized(); // the tag chips may need more or fewer rows
     list.repaint();
     repaint();
+}
+
+void PresetBrowser::setView (int newBank, const juce::String& folder, bool allTags)
+{
+    bank = juce::jlimit (0, 3, newBank);
+    userFolder = bank == 2 ? folder : juce::String();
+    favFolder = bank == 3 ? folder : juce::String();
+    showAllTags = allTags;
+    refresh();
 }
 
 int PresetBrowser::layoutChips (int x, int y, int width, bool apply)
 {
     if (apply)
         chips.clear();
-    const auto tags = ctx.proc.presets().allTags();
-    if (tags.isEmpty())
+    auto& pm = ctx.proc.presets();
+    const auto all = pm.allTags();
+    if (all.isEmpty())
         return 0;
+    // Collapsed: the tags on the most presets (most used first), plus any that are active.
+    juce::StringArray tags = all;
+    if (! showAllTags && all.size() > kTopTags)
+    {
+        std::map<juce::String, int> count;
+        for (const auto& p : pm.all())
+            for (const auto& t : p.tags)
+                ++count[t.toLowerCase()];
+        std::vector<juce::String> order (all.begin(), all.end());
+        std::stable_sort (order.begin(), order.end(), [&count] (const juce::String& a, const juce::String& b) {
+            return count[a.toLowerCase()] > count[b.toLowerCase()];
+        });
+        tags.clear();
+        for (int i = 0; i < kTopTags; ++i)
+            tags.add (order[(size_t) i]);
+        for (const auto& t : activeTags)
+            tags.addIfNotAlreadyThere (t, true);
+    }
     int cx = x, cy = y;
     const auto f = font (12.0f);
+    const auto toggleText = showAllTags ? juce::String ("Show fewer") : "Show all tags (" + juce::String (all.size()) + ")";
     auto place = [&] (const juce::String& t) {
-        const int w = (int) std::ceil (juce::GlyphArrangement::getStringWidth (f, t)) + 20;
+        const int w = (int) std::ceil (juce::GlyphArrangement::getStringWidth (f, t == kToggleChip ? toggleText : t)) + 20;
         if (cx + w > x + width && cx > x)
         {
             cx = x;
@@ -144,6 +241,8 @@ int PresetBrowser::layoutChips (int x, int y, int width, bool apply)
     place ("All tags");
     for (const auto& t : tags)
         place (t);
+    if (all.size() > kTopTags)
+        place (kToggleChip);
     return cy + 22 - y;
 }
 
@@ -162,43 +261,288 @@ void PresetBrowser::askText (const juce::String& title, const juce::String& mess
 }
 
 // Tick / untick tags on one preset, or make a new one.
+void PresetBrowser::addTagItems (juce::PopupMenu& m, const PresetInfo& p, int base)
+{
+    const auto tags = ctx.proc.presets().allTags();
+    for (int i = 0; i < tags.size(); ++i)
+        m.addItem (base + i + 1, tags[i], true, p.tags.contains (tags[i], true));
+    m.addSeparator();
+    m.addItem (base + 10000, "New tag...");
+    if (! p.tags.isEmpty())
+        m.addItem (base + 10001, "Clear tags");
+}
+
+void PresetBrowser::handleTagItem (const PresetInfo& p, const juce::StringArray& tags, int r)
+{
+    auto t = p.tags;
+    if (r == 10000)
+    {
+        askText ("New tag", "Add a tag to \"" + p.name + "\":", {}, [this, p] (const juce::String& name) {
+            auto t2 = p.tags;
+            t2.addIfNotAlreadyThere (name, true);
+            ctx.proc.presets().setTags (p, t2);
+            refresh();
+        });
+        return;
+    }
+    if (r == 10001)
+        t.clear();
+    else if (r >= 1 && r <= tags.size())
+    {
+        if (const auto& tag = tags[r - 1]; t.contains (tag, true))
+            t.removeString (tag, true);
+        else
+            t.add (tag);
+    }
+    else
+        return;
+    ctx.proc.presets().setTags (p, t);
+    refresh();
+}
+
 void PresetBrowser::showTagMenu (const PresetInfo& p, juce::Component* target)
 {
-    auto& pm = ctx.proc.presets();
-    const auto tags = pm.allTags();
     juce::PopupMenu m;
     m.addSectionHeader ("Tags for " + p.name);
-    for (int i = 0; i < tags.size(); ++i)
-        m.addItem (i + 1, tags[i], true, p.tags.contains (tags[i], true));
-    m.addSeparator();
-    m.addItem (10000, "New tag...");
-    if (! p.tags.isEmpty())
-        m.addItem (10001, "Clear tags");
+    addTagItems (m, p, 0);
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target),
-                     [this, p, tags, safe = juce::Component::SafePointer<PresetBrowser> (this)] (int r) {
+                     [this, p, tags = ctx.proc.presets().allTags(), safe = juce::Component::SafePointer<PresetBrowser> (this)] (int r) {
+                         if (safe != nullptr && r > 0)
+                             handleTagItem (p, tags, r);
+                     });
+}
+
+// Favourite on / off, and membership of each favourite folder.
+void PresetBrowser::addFavouriteItems (juce::PopupMenu& m, const PresetInfo& p, int base)
+{
+    auto& pm = ctx.proc.presets();
+    m.addItem (base + 1, "Favourite", true, pm.isFavourite (p));
+    const auto folders = pm.favouriteFolders();
+    if (! folders.isEmpty())
+    {
+        m.addSeparator();
+        m.addSectionHeader ("Favourite folders");
+        for (int i = 0; i < folders.size(); ++i)
+            m.addItem (base + 10 + i, folders[i], true, pm.isInFavouriteFolder (p, folders[i]));
+    }
+    m.addSeparator();
+    m.addItem (base + 2, "New folder...");
+}
+
+void PresetBrowser::handleFavouriteItem (const PresetInfo& p, const juce::StringArray& folders, int r)
+{
+    auto& pm = ctx.proc.presets();
+    if (r == 1)
+        pm.setFavourite (p, ! pm.isFavourite (p));
+    else if (r == 2)
+    {
+        newFavouriteFolder (&p);
+        return;
+    }
+    else if (r >= 10 && r - 10 < folders.size())
+        pm.setInFavouriteFolder (p, folders[r - 10], ! pm.isInFavouriteFolder (p, folders[r - 10]));
+    else
+        return;
+    refresh();
+}
+
+void PresetBrowser::showFavouriteMenu (const PresetInfo& p, juce::Component* target)
+{
+    juce::PopupMenu m;
+    m.addSectionHeader (p.name);
+    addFavouriteItems (m, p, 0);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target),
+                     [this, p, folders = ctx.proc.presets().favouriteFolders(), safe = juce::Component::SafePointer<PresetBrowser> (this)] (int r) {
+                         if (safe != nullptr && r > 0)
+                             handleFavouriteItem (p, folders, r);
+                     });
+}
+
+void PresetBrowser::showPresetMenu (const PresetInfo& p, juce::Component* target)
+{
+    juce::PopupMenu m, tagMenu;
+    m.addSectionHeader (p.name);
+    addFavouriteItems (m, p, 20000);
+    addTagItems (tagMenu, p, 0);
+    m.addSeparator();
+    m.addSubMenu ("Tags", tagMenu);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (target),
+                     [this, p, folders = ctx.proc.presets().favouriteFolders(), tags = ctx.proc.presets().allTags(),
+                      safe = juce::Component::SafePointer<PresetBrowser> (this)] (int r) {
                          if (safe == nullptr || r <= 0)
                              return;
-                         auto& mgr = ctx.proc.presets();
-                         auto t = p.tags;
-                         if (r == 10000)
-                         {
-                             askText ("New tag", "Add a tag to \"" + p.name + "\":", {}, [this, p] (const juce::String& name) {
-                                 auto t2 = p.tags;
-                                 t2.addIfNotAlreadyThere (name, true);
-                                 ctx.proc.presets().setTags (p, t2);
-                                 refresh();
-                             });
-                             return;
-                         }
-                         if (r == 10001)
-                             t.clear();
-                         else if (const auto& tag = tags[r - 1]; t.contains (tag, true))
-                             t.removeString (tag, true);
+                         if (r > 20000)
+                             handleFavouriteItem (p, folders, r - 20000);
                          else
-                             t.add (tag);
-                         mgr.setTags (p, t);
-                         refresh();
+                             handleTagItem (p, tags, r);
                      });
+}
+
+void PresetBrowser::newFavouriteFolder (const PresetInfo* addPreset)
+{
+    std::optional<PresetInfo> p;
+    if (addPreset != nullptr)
+        p = *addPreset;
+    askText ("New favourite folder", p ? "Name of the new folder (\"" + p->name + "\" will be put in it):" : juce::String ("Name of the new folder:"), {},
+             [this, p] (const juce::String& name) {
+                 auto& pm = ctx.proc.presets();
+                 if (! pm.addFavouriteFolder (name) && ! pm.favouriteFolders().contains (name, true))
+                     return;
+                 if (p)
+                     for (const auto& f : pm.favouriteFolders())
+                         if (f.equalsIgnoreCase (name.trim()))
+                             pm.setInFavouriteFolder (*p, f, true);
+                 refresh();
+             });
+}
+
+// --- Left side list ----------------------------------------------------------------------
+void PresetBrowser::rebuildSide()
+{
+    auto& pm = ctx.proc.presets();
+    side.clear();
+    const int w = juce::jmax (100, filterArea.getWidth() - 8);
+    int y = 0;
+    auto mk = [] (SideRow::Kind k, const juce::String& label, const juce::String& value = {}, int index = 0) {
+        SideRow r;
+        r.kind = k;
+        r.label = label;
+        r.value = value;
+        r.index = index;
+        return r;
+    };
+    auto add = [&] (SideRow r, int h) {
+        r.bounds = { 0, y, w, h };
+        y += h + 2;
+        side.push_back (r);
+    };
+    add (mk (SideRow::Heading, "Banks"), 22);
+    y += 4;
+    for (int i = 0; i < 4; ++i)
+    {
+        add (mk (SideRow::Bank, kBanks[i], {}, i), 22);
+        if (i == 2 && bank == 2)
+        {
+            std::map<juce::String, int> counts;
+            for (const auto& p : pm.all())
+                for (auto f = PresetManager::userSubfolder (p); f.isNotEmpty();)
+                {
+                    ++counts[f];
+                    if (! f.containsChar ('/'))
+                        break;
+                    f = f.upToLastOccurrenceOf ("/", false, false);
+                }
+            for (const auto& f : pm.userSubfolders())
+            {
+                auto r = mk (SideRow::UserFolder, f.fromLastOccurrenceOf ("/", false, false), f);
+                r.depth = f.retainCharacters ("/").length();
+                r.count = counts[f];
+                add (r, 20);
+            }
+        }
+        if (i == 3 && bank == 3)
+        {
+            for (const auto& f : pm.favouriteFolders())
+            {
+                auto r = mk (SideRow::FavFolder, f, f);
+                for (const auto& p : pm.all())
+                    r.count += pm.isInFavouriteFolder (p, f) ? 1 : 0;
+                add (r, 20);
+            }
+            add (mk (SideRow::NewFavFolder, "+ New folder..."), 20);
+        }
+    }
+    y += 10;
+    add (mk (SideRow::Heading, "Categories"), 22);
+    y += 4;
+    const auto& cats = PresetManager::categories();
+    for (int i = -1; i < cats.size(); ++i)
+        add (mk (SideRow::Category, i < 0 ? juce::String ("All") : cats[i], {}, i), 22);
+    sideList->setSize (w, y);
+    sideList->repaint();
+}
+
+bool PresetBrowser::sideSelected (const SideRow& r) const
+{
+    switch (r.kind)
+    {
+        case SideRow::Bank: return r.index == bank && (bank == 2 ? userFolder.isEmpty() : bank == 3 ? favFolder.isEmpty() : true);
+        case SideRow::UserFolder: return bank == 2 && userFolder == r.value;
+        case SideRow::FavFolder: return bank == 3 && favFolder == r.value;
+        case SideRow::Category: return r.index == category;
+        case SideRow::Heading:
+        case SideRow::NewFavFolder: return false;
+    }
+    return false;
+}
+
+void PresetBrowser::sideClicked (const SideRow& r, const juce::MouseEvent& e)
+{
+    auto& pm = ctx.proc.presets();
+    switch (r.kind)
+    {
+        case SideRow::Bank:
+            if (e.mods.isPopupMenu() && r.index == 3)
+            {
+                juce::PopupMenu m;
+                m.addItem (1, "New favourite folder...");
+                m.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (sideList->localAreaToGlobal (r.bounds)),
+                                 [this, safe = juce::Component::SafePointer<PresetBrowser> (this)] (int res) {
+                                     if (safe != nullptr && res == 1)
+                                         newFavouriteFolder (nullptr);
+                                 });
+                return;
+            }
+            bank = r.index;
+            userFolder = {};
+            favFolder = {};
+            break;
+        case SideRow::UserFolder:
+            userFolder = r.value;
+            break;
+        case SideRow::FavFolder:
+            if (e.mods.isPopupMenu())
+            {
+                juce::PopupMenu m;
+                m.addSectionHeader ("Folder: " + r.value);
+                m.addItem (1, "Rename folder...");
+                m.addItem (2, "Delete folder...");
+                m.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (sideList->localAreaToGlobal (r.bounds)),
+                                 [this, name = r.value, safe = juce::Component::SafePointer<PresetBrowser> (this)] (int res) {
+                                     if (safe == nullptr)
+                                         return;
+                                     if (res == 1)
+                                         askText ("Rename folder", "New name for \"" + name + "\":", name, [this, name] (const juce::String& to) {
+                                             if (ctx.proc.presets().renameFavouriteFolder (name, to) && favFolder == name)
+                                                 favFolder = to.trim();
+                                             refresh();
+                                         });
+                                     else if (res == 2)
+                                         juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "Delete folder",
+                                                                             "Delete the favourite folder \"" + name + "\"? Its presets stay favourites.", "Delete", "Cancel", nullptr,
+                                                                             juce::ModalCallbackFunction::create ([this, name] (int ok) {
+                                                                                 if (ok == 1)
+                                                                                 {
+                                                                                     ctx.proc.presets().deleteFavouriteFolder (name);
+                                                                                     refresh();
+                                                                                 }
+                                                                             }));
+                                 });
+                return;
+            }
+            favFolder = r.value;
+            break;
+        case SideRow::NewFavFolder:
+            newFavouriteFolder (nullptr);
+            return;
+        case SideRow::Category:
+            category = r.index;
+            break;
+        case SideRow::Heading:
+            return;
+    }
+    juce::ignoreUnused (pm);
+    refresh();
 }
 
 juce::String PresetBrowser::getTooltipForRow (int row)
@@ -293,6 +637,9 @@ void PresetBrowser::resized()
     if (ch > 0)
         r.removeFromTop (8);
     list.setBounds (r.withTrimmedBottom (18));
+    sideView.setBounds (filterArea);
+    if (sideList != nullptr && sideList->getWidth() != juce::jmax (100, filterArea.getWidth() - 8))
+        rebuildSide();
     tagsBtn.setBounds (infoArea.getX(), infoArea.getY() + 186, infoArea.getWidth(), 26);
     auto b = infoArea.withTrimmedTop (222);
     auto row = [&b] (FlatButton& x, FlatButton& y) {
@@ -317,27 +664,6 @@ void PresetBrowser::paint (juce::Graphics& g)
     g.fillAll (col::bg);
     drawPanel (g, filterArea.toFloat().expanded (6.0f));
     drawPanel (g, infoArea.toFloat().expanded (6.0f));
-    drawSectionTitle (g, { filterArea.getX(), filterArea.getY(), filterArea.getWidth(), 20 }, "Banks", col::gold);
-    for (int i = 0; i < 4; ++i)
-    {
-        const auto rr = bankRow (i);
-        g.setColour (i == bank ? col::accentDim : col::panel);
-        g.fillRoundedRectangle (rr.toFloat(), 4.0f);
-        g.setColour (i == bank ? juce::Colours::white : col::text);
-        g.setFont (font (13.0f));
-        g.drawText (kBanks[i], rr.reduced (8, 0), juce::Justification::centredLeft);
-    }
-    drawSectionTitle (g, { filterArea.getX(), filterArea.getY() + 160, filterArea.getWidth(), 20 }, "Categories", col::gold);
-    const auto& cats = PresetManager::categories();
-    for (int i = -1; i < cats.size(); ++i)
-    {
-        const auto rr = catRow (i);
-        g.setColour (i == category ? col::accentDim : col::panel);
-        g.fillRoundedRectangle (rr.toFloat(), 4.0f);
-        g.setColour (i == category ? juce::Colours::white : col::text);
-        g.setFont (font (13.0f));
-        g.drawText (i < 0 ? juce::String ("All") : cats[i], rr.reduced (8, 0), juce::Justification::centredLeft);
-    }
     // Current preset info
     const auto info = ctx.proc.presets().currentInfo();
     auto ir = infoArea;
@@ -365,6 +691,18 @@ void PresetBrowser::paint (juce::Graphics& g)
     for (const auto& [tag, rr] : chips)
     {
         const bool all = tag == "All tags";
+        if (tag == kToggleChip)
+        {
+            g.setColour (col::panelLo);
+            g.fillRoundedRectangle (rr.toFloat(), 11.0f);
+            g.setColour (col::gold.withAlpha (0.6f));
+            g.drawRoundedRectangle (rr.toFloat().reduced (0.5f), 11.0f, 1.0f);
+            g.setColour (col::gold);
+            g.setFont (font (12.0f));
+            g.drawText (showAllTags ? juce::String ("Show fewer") : "Show all tags (" + juce::String (ctx.proc.presets().allTags().size()) + ")",
+                        rr, juce::Justification::centred);
+            continue;
+        }
         const bool on = all ? activeTags.isEmpty() : activeTags.contains (tag, true);
         g.setColour (on ? col::accentDim : col::panel);
         g.fillRoundedRectangle (rr.toFloat(), 11.0f);
@@ -414,7 +752,7 @@ void PresetBrowser::listBoxItemClicked (int row, const juce::MouseEvent& e)
     auto& pm = ctx.proc.presets();
     if (e.mods.isPopupMenu())
     {
-        showTagMenu (pm.all()[(size_t) rows[(size_t) row]], &list);
+        showPresetMenu (pm.all()[(size_t) rows[(size_t) row]], &list);
         return;
     }
     pm.load (pm.all()[(size_t) rows[(size_t) row]]);
@@ -429,6 +767,12 @@ void PresetBrowser::mouseDown (const juce::MouseEvent& e)
             if (tag == "All tags")
             {
                 activeTags.clear();
+                refresh();
+                return;
+            }
+            if (tag == kToggleChip)
+            {
+                showAllTags = ! showAllTags;
                 refresh();
                 return;
             }
@@ -472,18 +816,6 @@ void PresetBrowser::mouseDown (const juce::MouseEvent& e)
                 activeTags.add (tag);
             refresh();
             return;
-        }
-    for (int i = 0; i < 4; ++i)
-        if (bankRow (i).contains (e.getPosition()))
-        {
-            bank = i;
-            refresh();
-        }
-    for (int i = -1; i < PresetManager::categories().size(); ++i)
-        if (catRow (i).contains (e.getPosition()))
-        {
-            category = i;
-            refresh();
         }
 }
 

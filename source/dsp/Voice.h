@@ -19,6 +19,17 @@ struct VoiceOut
     float* r[NumVoiceBuses];
 };
 
+// Editor "sound LEDs": how much each part sends into the filters (peak, after its
+// volume, the engine volume and the voice's amp envelope / Amp Mod). Measured only
+// while the editor is open.
+enum Meter : int
+{
+    MeterEngine1 = 0, MeterE1Osc1, MeterE1Osc2, MeterE1Osc3, MeterE1Noise, // Wavetable engine: Osc1 = wavetable, Osc2 = modulator
+    MeterEngine2, MeterE2Osc1, MeterE2Osc2, MeterE2Osc3, MeterE2Noise,
+    MeterUtility, MeterUtilOsc, MeterUtilNoise1, MeterUtilNoise2,
+    NumMeters
+};
+
 class Voice
 {
 public:
@@ -190,6 +201,24 @@ public:
 
     float sourceValue (int s) const noexcept { return (s >= 0 && s < NumModSources) ? src[s] : 0.0f; }
 
+    // Editor dots: where each envelope / LFO / function of this voice is (see
+    // Envelope::getPosition; LFO phase and function position 0..1).
+    float envPosition (int k) const noexcept { return k == 0 ? env.getPosition() : k == 1 ? env2.getPosition() : env3.getPosition(); }
+    float envLevel (int k) const noexcept { return k == 0 ? env.getLevel() : k == 1 ? env2.getLevel() : env3.getLevel(); }
+    float lfoPhase (int k) const noexcept { return lfo[std::clamp (k, 0, kNumLfos - 1)].getPhase(); }
+    float funcPosition (int k) const noexcept { return func[std::clamp (k, 0, kNumFuncs - 1)].getPosition(); }
+
+    // Sound LEDs: set before rendering; meterPeak() holds the peaks since the last takeMeters().
+    void setMetering (bool on) noexcept { metering = on; }
+    void takeMeters (float* peaks) noexcept
+    {
+        for (int m = 0; m < NumMeters; ++m)
+        {
+            peaks[m] = std::max (peaks[m], meterPeak[m]);
+            meterPeak[m] = 0.0f;
+        }
+    }
+
     static bool hasChordEngine (const SynthParams& p) noexcept
     {
         for (const auto& e : p.engine)
@@ -213,6 +242,9 @@ private:
         const float transpose = 12.0f * (float) p.transposeOct + p.transposeFine + bendSemis;
         const float notePitch = pitch + transpose;
         const float fixedPitch = 60.0f + transpose;
+
+        if (metering)
+            std::fill (std::begin (blockMeter), std::end (blockMeter), 0.0f);
 
         // --- engines --------------------------------------------------------
         // Cross-mod: an engine can use the other engine's output as its modulator.
@@ -242,10 +274,18 @@ private:
                 ext = (k == 0) ? prevMod[other] : modBuf[other];
 
             float eL[kBlock] {}, eR[kBlock] {};
+            float* em = metering ? blockMeter + (e == 0 ? MeterE1Osc1 : MeterE2Osc1) : nullptr;
             if (ep.type == EngineWavetable)
-                wavetable[e].render (ep, notePitch, fixedPitch, n, eL, eR, ext, modBuf[e]);
+                wavetable[e].render (ep, notePitch, fixedPitch, n, eL, eR, ext, modBuf[e], em);
             else
-                analog[e].render (ep, notePitch, fixedPitch, n, eL, eR, ext, modBuf[e]);
+                analog[e].render (ep, notePitch, fixedPitch, n, eL, eR, ext, modBuf[e], em);
+            if (metering)
+            {
+                float pk = 0.0f;
+                for (int i = 0; i < n; ++i)
+                    pk = std::max (pk, 0.5f * (std::abs (eL[i]) + std::abs (eR[i])));
+                blockMeter[e == 0 ? MeterEngine1 : MeterEngine2] = pk;
+            }
             if (needFollow)
             {
                 float pk = 0.0f;
@@ -269,7 +309,10 @@ private:
 
         // Utility renders into its own buffers (also used as an FM source and by the follower).
         float u1L[kBlock] {}, u1R[kBlock] {}, u2L[kBlock] {}, u2R[kBlock] {};
-        utility.render (p.utility, notePitch, fixedPitch, n, u1L, u1R, u2L, u2R, postL, postR);
+        utility.render (p.utility, notePitch, fixedPitch, n, u1L, u1R, u2L, u2R, postL, postR,
+                        metering ? blockMeter + MeterUtilOsc : nullptr);
+        if (metering)
+            blockMeter[MeterUtility] = std::max ({ blockMeter[MeterUtilOsc], blockMeter[MeterUtilNoise1], blockMeter[MeterUtilNoise2] });
         float uPk = 0.0f;
         for (int i = 0; i < n; ++i)
         {
@@ -392,6 +435,12 @@ private:
                 fPkV = std::max (fPkV, std::abs ((bL + aL + postL[i]) * amp));
             }
         }
+        if (metering)
+        {
+            const float amp = std::abs (envNow * gainNow * fade);
+            for (int m = 0; m < NumMeters; ++m)
+                meterPeak[m] = std::max (meterPeak[m], blockMeter[m] * amp);
+        }
         envPrev = envNow;
         ampGainNow = gainNow;
         if (needFollow)
@@ -433,6 +482,9 @@ private:
     float ampGainNow = 1.0f;  // smoothed, per sample
     float ampSmooth = 0.01f;
     bool ampGainSnap = true;  // a fresh note starts at its target gain
+    bool metering = false;
+    float blockMeter[NumMeters] {}; // this block, before the amp envelope
+    float meterPeak[NumMeters] {};  // since the last takeMeters()
     SynthParams local;
     bool localValid = false;
 

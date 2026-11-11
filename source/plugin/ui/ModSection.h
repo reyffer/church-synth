@@ -14,6 +14,7 @@ public:
     void paint (juce::Graphics&) override;
     void tick(); // push live values (editor timer)
     std::function<void (int)> onSourceClicked; // opens the matching tab
+    juce::Rectangle<int> tileBounds (int source) const; // in this component
 
 private:
     class Tile;
@@ -35,6 +36,8 @@ public:
     void tick();
     void showTab (int t);
     void showTabForSource (int source);
+    int currentTab() const noexcept { return current; }
+    juce::Rectangle<int> tabBounds (int t) const { return tabRect (t); }
 
 private:
     UiContext& ctx;

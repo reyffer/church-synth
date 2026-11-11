@@ -39,8 +39,10 @@ public:
     // fixedPitch: 60 + bend/transpose, used when key tracking is off.
     // extMod: if non-null, the other engine's output replaces the Osc3/Noise modulator.
     // modOut: receives this engine's mono output before its Volume (for cross-mod).
+    // meter: if non-null, receives the peak output of Osc 1..3 and the noise
+    // (after their volumes and the engine volume) in meter[0..3].
     void render (const EngineParams& p, float notePitch, float fixedPitch,
-                 int n, float* outL, float* outR, const float* extMod, float* modOut) noexcept
+                 int n, float* outL, float* outR, const float* extMod, float* modOut, float* meter = nullptr) noexcept
     {
         if (! p.on)
             return;
@@ -96,10 +98,12 @@ public:
         const float engVol = p.volume;
         const int wave1 = p.osc[0].wave, wave2 = p.osc[1].wave, wave3 = p.osc[2].wave;
 
+        float pk1 = 0.0f, pk2 = 0.0f, pk3 = 0.0f, pkN = 0.0f;
         for (int i = 0; i < n; ++i)
         {
             const float nz = needNoise ? noise.tick() : 0.0f;
             float sumL = 0.0f, sumR = 0.0f;
+            float a1 = 0.0f, a2 = 0.0f, a3 = 0.0f; // each oscillator summed over unison (meters)
 
             for (int u = 0; u < count; ++u)
             {
@@ -125,6 +129,16 @@ public:
                 const float s = o1 * vol1 + o2 * vol2 + o3 * vol3;
                 sumL += s * panL[u];
                 sumR += s * panR[u];
+                a1 += o1;
+                a2 += o2;
+                a3 += o3;
+            }
+            if (meter != nullptr)
+            {
+                pk1 = std::max (pk1, std::abs (a1));
+                pk2 = std::max (pk2, std::abs (a2));
+                pk3 = std::max (pk3, std::abs (a3));
+                pkN = std::max (pkN, std::abs (nz));
             }
 
             const float nOut = nz * p.noiseVolume;
@@ -132,6 +146,15 @@ public:
             outL[i] += l * engVol;
             outR[i] += r * engVol;
             modOut[i] = 0.5f * (l + r);
+        }
+        if (meter != nullptr)
+        {
+            // Unison sub-voices are panned; about 0.7 of the sum reaches each side.
+            const float g = gainNorm * std::abs (engVol) * 0.7071f;
+            meter[0] = pk1 * std::abs (vol1) * g;
+            meter[1] = pk2 * std::abs (vol2) * g;
+            meter[2] = pk3 * std::abs (vol3) * g;
+            meter[3] = pkN * std::abs (p.noiseVolume * engVol);
         }
     }
 

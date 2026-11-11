@@ -24,6 +24,7 @@ const juce::Colour gold (0xfff0b44c);       // brand, highlights
 const juce::Colour knobBody (0xff2d3038);
 const juce::Colour knobTrack (0xff3a3e47);
 const juce::Colour warn (0xffe8575a);
+const juce::Colour led (0xff5ee07f);        // sound LEDs
 
 // Modulation source groups.
 const juce::Colour modKeyboard (0xffe264a8);

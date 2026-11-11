@@ -63,6 +63,9 @@ public:
 
     // For screenshots / tests: 0 Synth, 1 FX, 2 Seq, 3 preset browser; modTab 0..5.
     void showView (int view, int modTab = -1, int engineTab = -1);
+    void showBrowserView (int bank, const juce::String& folder, bool allTags);
+    void selectModSource (int source, int focusedDest = -1); // mod links / knob focus
+    void tickForTest(); // what the timers do, for screenshots without a message loop
 
 private:
     class Root;

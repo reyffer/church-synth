@@ -33,8 +33,10 @@ public:
     }
 
     // Same contract as AnalogEngine::render.
+    // meter: if non-null, receives the peak of the wavetable oscillator (meter[0]) and of the
+    // modulator heard through its own volume (meter[1]), after the engine volume.
     void render (const EngineParams& p, float notePitch, float fixedPitch,
-                 int n, float* outL, float* outR, const float* extMod, float* modOut) noexcept
+                 int n, float* outL, float* outR, const float* extMod, float* modOut, float* meter = nullptr) noexcept
     {
         const auto& w = p.wt;
         const Wavetable* table = w.table;
@@ -107,6 +109,7 @@ public:
 
         const float wtVol = w.wtVolume, modVol = w.modVolume, engVol = p.volume;
 
+        float pkW = 0.0f, pkM = 0.0f; // meters
         for (int i = 0; i < n; ++i)
         {
             // Modulator: the other engine, a noise colour or a basic wave.
@@ -167,6 +170,17 @@ public:
             outL[i] += l * engVol;
             outR[i] += r * engVol;
             modOut[i] = 0.5f * (l + r);
+            if (meter != nullptr)
+            {
+                pkW = std::max (pkW, 0.5f * std::abs (sumL + sumR));
+                pkM = std::max (pkM, std::abs (mOut));
+            }
+        }
+        if (meter != nullptr)
+        {
+            meter[0] = pkW * gainNorm * std::abs (wtVol * engVol);
+            meter[1] = pkM * std::abs (engVol);
+            meter[2] = meter[3] = 0.0f;
         }
     }
 

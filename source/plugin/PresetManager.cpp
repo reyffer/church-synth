@@ -131,6 +131,7 @@ juce::ValueTree PresetBuilder::build (const juce::String& name, const juce::Stri
 PresetManager::PresetManager (ChurchSynthProcessor& p) : proc (p)
 {
     loadFavourites();
+    loadFavouriteFolders();
 }
 
 juce::File PresetManager::rootFolder()
@@ -186,6 +187,7 @@ void PresetManager::rescan()
     list.insert (list.end(), user.begin(), user.end());
     loadTagEdits(); // re-read: another instance may have changed them
     loadFavourites();
+    loadFavouriteFolders();
     for (auto& p : list)
         if (auto it = tagEdits.find (p.key()); it != tagEdits.end())
             p.tags = it->second;
@@ -490,8 +492,137 @@ void PresetManager::setFavourite (const PresetInfo& p, bool fav)
     if (fav)
         favourites.insert (p.key());
     else
+    {
         favourites.erase (p.key());
+        bool changed = false;
+        for (auto& [name, keys] : favFolders)
+            changed = keys.erase (p.key()) > 0 || changed;
+        if (changed)
+            saveFavouriteFolders();
+    }
     saveFavourites();
+}
+
+// --- Favourite folders ------------------------------------------------------------------
+void PresetManager::loadFavouriteFolders()
+{
+    favFolders.clear();
+    if (auto xml = juce::XmlDocument::parse (rootFolder().getChildFile ("Favourite Folders.xml")))
+        for (auto* f : xml->getChildWithTagNameIterator ("FOLDER"))
+        {
+            const auto name = f->getStringAttribute ("name").trim();
+            if (name.isEmpty())
+                continue;
+            auto& keys = favFolders[name];
+            for (auto* pr : f->getChildWithTagNameIterator ("PRESET"))
+                if (const auto k = pr->getStringAttribute ("key"); k.isNotEmpty())
+                    keys.insert (k);
+        }
+}
+
+void PresetManager::saveFavouriteFolders() const
+{
+    rootFolder().createDirectory();
+    juce::XmlElement root ("FAVOURITE_FOLDERS");
+    for (const auto& [name, keys] : favFolders)
+    {
+        auto* f = root.createNewChildElement ("FOLDER");
+        f->setAttribute ("name", name);
+        for (const auto& k : keys)
+            f->createNewChildElement ("PRESET")->setAttribute ("key", k);
+    }
+    root.writeTo (rootFolder().getChildFile ("Favourite Folders.xml"));
+}
+
+juce::StringArray PresetManager::favouriteFolders() const
+{
+    juce::StringArray r;
+    for (const auto& [name, keys] : favFolders)
+        r.add (name);
+    r.sortNatural();
+    return r;
+}
+
+bool PresetManager::isInFavouriteFolder (const PresetInfo& p, const juce::String& folder) const
+{
+    const auto it = favFolders.find (folder);
+    return it != favFolders.end() && it->second.count (p.key()) > 0;
+}
+
+void PresetManager::setInFavouriteFolder (const PresetInfo& p, const juce::String& folder, bool in)
+{
+    auto it = favFolders.find (folder);
+    if (it == favFolders.end())
+        return;
+    if (in)
+    {
+        it->second.insert (p.key());
+        if (favourites.insert (p.key()).second)
+            saveFavourites();
+    }
+    else
+        it->second.erase (p.key());
+    saveFavouriteFolders();
+}
+
+bool PresetManager::addFavouriteFolder (const juce::String& name)
+{
+    const auto n = name.trim();
+    for (const auto& [existing, keys] : favFolders)
+        if (existing.equalsIgnoreCase (n))
+            return false;
+    if (n.isEmpty())
+        return false;
+    favFolders[n];
+    saveFavouriteFolders();
+    return true;
+}
+
+bool PresetManager::renameFavouriteFolder (const juce::String& from, const juce::String& to)
+{
+    const auto n = to.trim();
+    auto it = favFolders.find (from);
+    if (it == favFolders.end() || n.isEmpty())
+        return false;
+    for (const auto& [existing, keys] : favFolders)
+        if (existing.equalsIgnoreCase (n) && existing != from)
+            return false;
+    auto keys = std::move (it->second);
+    favFolders.erase (it);
+    favFolders[n] = std::move (keys);
+    saveFavouriteFolders();
+    return true;
+}
+
+void PresetManager::deleteFavouriteFolder (const juce::String& name)
+{
+    if (favFolders.erase (name) > 0)
+        saveFavouriteFolders();
+}
+
+// --- User subfolders --------------------------------------------------------------------
+juce::String PresetManager::userSubfolder (const PresetInfo& p)
+{
+    if (p.factory || p.file == juce::File())
+        return {};
+    const auto dir = p.file.getParentDirectory();
+    if (dir == userPresetFolder() || ! dir.isAChildOf (userPresetFolder()))
+        return {};
+    return dir.getRelativePathFrom (userPresetFolder()).replaceCharacter ('\\', '/');
+}
+
+juce::StringArray PresetManager::userSubfolders()
+{
+    juce::StringArray r;
+    for (const auto& p : all())
+        for (auto f = userSubfolder (p); f.isNotEmpty(); f = f.upToLastOccurrenceOf ("/", false, false))
+        {
+            r.addIfNotAlreadyThere (f);
+            if (! f.containsChar ('/'))
+                break;
+        }
+    r.sortNatural();
+    return r;
 }
 
 // --- Patterns ------------------------------------------------------------------------

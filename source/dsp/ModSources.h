@@ -131,6 +131,7 @@ public:
 
     float value = 0.0f;
     bool wrapped = false;
+    float getPhase() const noexcept { return phase; } // 0..1 (editor)
 
 private:
     float phase = 0.0f, fadeLevel = 1.0f, held = 0.0f, prevHeld = 0.0f, smoothed = 0.0f;
@@ -258,6 +259,7 @@ public:
 
     float value = 0.0f;
     bool wrapped = false;
+    float getPosition() const noexcept { return pos; } // 0..1 along the shape (editor)
 
 private:
     float pos = 0.0f, smoothed = 0.0f;

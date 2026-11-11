@@ -57,6 +57,19 @@ public:
     std::atomic<bool> uiActive { false };
     std::atomic<float> uiSource[NumModSources] {};
     std::atomic<int> uiVoices { 0 };
+    // Sound LEDs (see Meter in Voice.h): the loudest voice's peak per part since the editor
+    // last read it (it reads with exchange (0)).
+    mutable std::atomic<float> uiMeter[NumMeters] {}; // mutable: the editor reads them with exchange (0)
+    // Travelling dots: per voice slot. age < 0: not sounding (else larger = newer).
+    // env: Envelope::getPosition (-1 idle or not computed); lfo / func: 0..1, -1 when
+    // the source isn't running (nothing uses it). Global-retrig LFOs / functions report
+    // the shared instance on every voice.
+    struct UiVoice
+    {
+        std::atomic<int> age { -1 };
+        std::atomic<float> env[3] {}, envLevel[3] {}, lfo[kNumLfos] {}, func[kNumFuncs] {};
+    };
+    UiVoice uiVoice[kMaxVoices];
 
     // FX: effect objects are owned by an fx::FxHost (see FxHost.h) bound to this rack.
     fx::FxRack& getFxRack() noexcept { return fxRack; }

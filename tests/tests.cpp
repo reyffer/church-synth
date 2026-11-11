@@ -214,6 +214,58 @@ static void testLegatoVelocityNoClick()
     CHECK (change < steady * 1.5f, "legato velocity change is smooth"); // a step would jump ~0.5
 }
 
+// Sound LEDs: metering reports each part, and never changes the audio.
+static void testMetersAndDots()
+{
+    auto render = [] (bool metering, std::vector<float>& out, float* meters, float* envPos) {
+        auto sPtr = std::make_unique<SynthCore>();
+        SynthCore& s = *sPtr;
+        s.setSampleRate (48000.0f);
+        s.params = patches::pad();
+        auto& p = s.params;
+        p.engine[0].osc[0].volume = 0.8f;
+        p.engine[0].osc[1].volume = 0.0f;
+        p.engine[0].osc[2].volume = 0.05f; // quiet
+        p.engine[0].noiseVolume = 0.0f;
+        p.ampEnv.attack = 0.1f;
+        p.ampEnv.decay = 0.2f;
+        p.ampEnv.sustain = 0.5f;
+        p.ampEnv.release = 0.3f;
+        s.uiActive.store (metering);
+        std::vector<float> l (48000), r (48000);
+        s.noteOn (60, 0.8f);
+        s.render (l.data(), r.data(), 2400); // 50 ms: in the attack
+        for (const auto& u : s.uiVoice)
+            if (u.age.load() >= 0)
+                envPos[0] = u.env[0].load();
+        for (int m = 0; m < NumMeters; ++m)
+            meters[m] = s.uiMeter[m].exchange (0.0f);
+        s.render (l.data() + 2400, r.data() + 2400, 24000); // 0.55 s: sustain
+        for (const auto& u : s.uiVoice)
+            if (u.age.load() >= 0)
+                envPos[1] = u.env[0].load();
+        s.noteOff (60);
+        s.render (l.data() + 26400, r.data() + 26400, 4800); // 0.1 s into the release
+        for (const auto& u : s.uiVoice)
+            if (u.age.load() >= 0)
+                envPos[2] = u.env[0].load();
+        out = l;
+    };
+    std::vector<float> a, b;
+    float m[NumMeters] {}, mOff[NumMeters] {}, pos[3] { -9.0f, -9.0f, -9.0f }, posOff[3] {};
+    render (true, a, m, pos);
+    render (false, b, mOff, posOff);
+    CHECK (a == b, "metering doesn't change the audio");
+    CHECK (m[MeterE1Osc1] > 0.01f, "Osc 1 meter lights");
+    CHECK (m[MeterE1Osc3] > 0.0f && m[MeterE1Osc3] < m[MeterE1Osc1] * 0.2f, "quiet Osc 3 meter is faint");
+    CHECK (m[MeterE1Osc2] == 0.0f, "silent Osc 2 meter stays dark");
+    CHECK (m[MeterEngine1] > 0.01f, "engine meter lights");
+    CHECK (mOff[MeterE1Osc1] == 0.0f, "no metering without the editor");
+    CHECK (pos[0] >= 0.0f && pos[0] < 1.0f, "env dot in the attack");
+    CHECK (pos[1] == 2.5f, "env dot at the sustain");
+    CHECK (pos[2] >= 3.0f && pos[2] < 4.0f, "env dot in the release");
+}
+
 static void testHeavyPatchSane()
 {
     for (auto p : { patches::pad(), patches::supersaw(), patches::worstCase() })
@@ -1892,6 +1944,7 @@ int main()
     testSustainPedal();
     testMonoLegato();
     testLegatoVelocityNoClick();
+    testMetersAndDots();
     testHeavyPatchSane();
     if (failures == 0)
         std::printf ("All tests passed.\n");

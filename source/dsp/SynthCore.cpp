@@ -579,6 +579,9 @@ void SynthCore::renderChunk (float* outL, float* outR, int n) noexcept
     constexpr float kVoiceGain = 0.25f; // headroom for chords
 
     computeUsedSources();
+    const bool meter = uiActive.load (std::memory_order_relaxed);
+    for (auto& v : voices)
+        v.setMetering (meter);
     global.modWheel = modWheel;
     global.aftertouch = channelPressure;
     global.expression = expression;
@@ -641,6 +644,39 @@ void SynthCore::renderChunk (float* outL, float* outR, int n) noexcept
         for (const auto& v : voices)
             active += v.isActive() ? 1 : 0;
         uiVoices.store (active, std::memory_order_relaxed);
+        float pk[NumMeters] {};
+        for (auto& v : voices)
+            v.takeMeters (pk);
+        uint64_t newest = 0;
+        for (const auto& v : voices)
+            newest = std::max (newest, v.getAge());
+        for (int i = 0; i < kMaxVoices; ++i)
+        {
+            const auto& v = voices[i];
+            auto& u = uiVoice[i];
+            if (! v.isActive())
+            {
+                u.age.store (-1, std::memory_order_relaxed);
+                continue;
+            }
+            // Rank by age: 1000000 - distance from the newest note (fits an int, newer = larger).
+            u.age.store ((int) std::max<int64_t> (0, 1000000 - (int64_t) (newest - v.getAge())), std::memory_order_relaxed);
+            for (int k = 0; k < 3; ++k)
+            {
+                const bool computed = k == 0 || global.used[k == 1 ? SrcEnv2 : SrcEnv3];
+                u.env[k].store (computed ? v.envPosition (k) : -1.0f, std::memory_order_relaxed);
+                u.envLevel[k].store (v.envLevel (k), std::memory_order_relaxed);
+            }
+            for (int k = 0; k < kNumLfos; ++k)
+                u.lfo[k].store (! global.used[SrcLfo1 + k] ? -1.0f : global.lfoIsGlobal[k] ? gLfo[k].getPhase() : v.lfoPhase (k),
+                                std::memory_order_relaxed);
+            for (int k = 0; k < kNumFuncs; ++k)
+                u.func[k].store (! global.used[SrcFunc1 + k] ? -1.0f : global.funcIsGlobal[k] ? gFunc[k].getPosition() : v.funcPosition (k),
+                                 std::memory_order_relaxed);
+        }
+        for (int m = 0; m < NumMeters; ++m)
+            if (pk[m] > uiMeter[m].load (std::memory_order_relaxed))
+                uiMeter[m].store (pk[m], std::memory_order_relaxed);
         // Per-voice sources show the newest voice (0 when nothing plays).
         const bool anyVoice = voices[lastStarted].isActive();
         for (int s2 = 0; s2 < NumModSources; ++s2)

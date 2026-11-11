@@ -53,7 +53,64 @@ static void snapshotEditor (ChurchSynthProcessor& p, const juce::File& dir)
     ed->showView (1, 1, 1);
     shot ("fx_eq_dist");
     ed->showView (2, 1); shot ("seq");
+    // Live views: sound LEDs, travelling dots, mod links (audio runs while the editor's timers tick).
+    {
+        p.prepareToPlay (48000.0, 512);
+        juce::AudioBuffer<float> buf (2, 512);
+        auto run = [&] (int blocks, std::initializer_list<int> on, bool off) {
+            for (int b = 0; b < blocks; ++b)
+            {
+                juce::MidiBuffer midi;
+                if (b == 0)
+                    for (int n : on)
+                        midi.addEvent (off ? juce::MidiMessage::noteOff (1, n) : juce::MidiMessage::noteOn (1, n, (juce::uint8) 100), 0);
+                buf.clear();
+                p.processBlock (buf, midi);
+                ed->tickForTest();
+            }
+        };
+        ed->showView (0, 1, 0);
+        run (5, { 48 }, false);
+        run (40, { 55, 60, 64 }, false);
+        shot ("live_synth_env");
+        ed->showView (0, 2, 2);
+        run (20, {}, false);
+        shot ("live_lfo_utility");
+        ed->showView (0, 3, 1);
+        run (10, {}, false);
+        shot ("live_func_engine2");
+        ed->showView (0, 1, 0);
+        // The first routed source: lines to its knobs.
+        int src = -1;
+        const auto routes = p.getRoutes();
+        if (routes.count > 0)
+            src = routes.routes[0].source;
+        ed->selectModSource (src, routes.count > 0 ? routes.routes[0].dest : -1);
+        run (10, {}, false);
+        shot ("live_links");
+        ed->selectModSource (src, -1);
+        ed->showView (1, 1);
+        run (5, {}, false);
+        shot ("live_links_fx");
+        ed->showView (0, 1, 0);
+        run (25, { 48, 55, 60, 64 }, true);
+        shot ("live_release");
+        ed->selectModSource (-1);
+        run (5, {}, false);
+    }
     ed->showView (3); shot ("browser");
+    ed->showBrowserView (0, {}, true); shot ("browser_all_tags");
+    ed->showBrowserView (2, {}, false); shot ("browser_user");
+    if (const auto folders = p.presets().userSubfolders(); ! folders.isEmpty())
+    {
+        ed->showBrowserView (2, folders[0], false);
+        shot ("browser_user_folder");
+    }
+    if (const auto favs = p.presets().favouriteFolders(); ! favs.isEmpty())
+    {
+        ed->showBrowserView (3, favs[0], false);
+        shot ("browser_fav_folder");
+    }
 }
 
 
@@ -902,6 +959,61 @@ int main (int argc, char** argv)
                 tagFile.replaceWithText (tagBackup);
             else
                 tagFile.deleteFile();
+            pm.rescan();
+        }
+        // Favourite folders (playlists) and User subfolders.
+        {
+            const auto favFile = PresetManager::rootFolder().getChildFile ("Favourite Folders.xml");
+            const auto favList = PresetManager::rootFolder().getChildFile ("Favourites.txt");
+            const bool hadFav = favFile.existsAsFile(), hadList = favList.existsAsFile();
+            const auto favBackup = favFile.loadFileAsString(), listBackup = favList.loadFileAsString();
+            const auto sanct = pm.all()[0];
+            pm.addFavouriteFolder ("zz Folder A");
+            pm.addFavouriteFolder ("zz Folder B");
+            pm.setInFavouriteFolder (sanct, "zz Folder A", true);
+            pm.setInFavouriteFolder (sanct, "zz Folder B", true);
+            pm.rescan(); // re-reads the files
+            if (! pm.isFavourite (sanct) || ! pm.isInFavouriteFolder (sanct, "zz Folder A") || ! pm.isInFavouriteFolder (sanct, "zz Folder B"))
+            {
+                std::printf ("FAIL: favourite folders not kept\n");
+                ++failures;
+            }
+            pm.renameFavouriteFolder ("zz Folder A", "zz Folder C");
+            if (pm.favouriteFolders().contains ("zz Folder A") || ! pm.isInFavouriteFolder (sanct, "zz Folder C"))
+            {
+                std::printf ("FAIL: favourite folder rename\n");
+                ++failures;
+            }
+            pm.setFavourite (sanct, false); // un-favourite: out of every folder
+            if (pm.isInFavouriteFolder (sanct, "zz Folder B") || pm.isInFavouriteFolder (sanct, "zz Folder C"))
+            {
+                std::printf ("FAIL: un-favourite didn't empty the folders\n");
+                ++failures;
+            }
+            pm.deleteFavouriteFolder ("zz Folder B");
+            pm.deleteFavouriteFolder ("zz Folder C");
+            if (pm.favouriteFolders().contains ("zz Folder B"))
+            {
+                std::printf ("FAIL: favourite folder delete\n");
+                ++failures;
+            }
+            const auto sub = PresetManager::userPresetFolder().getChildFile ("zz Sub").getChildFile ("Deeper");
+            sub.createDirectory();
+            pm.writePresetFile (sub.getChildFile ("zz sub preset.csp"), "zz sub preset", "Pad", "test", "");
+            pm.rescan();
+            PresetInfo subInfo;
+            for (const auto& i : pm.all())
+                if (i.name == "zz sub preset")
+                    subInfo = i;
+            if (PresetManager::userSubfolder (subInfo) != "zz Sub/Deeper" || ! pm.userSubfolders().contains ("zz Sub")
+                || ! pm.userSubfolders().contains ("zz Sub/Deeper"))
+            {
+                std::printf ("FAIL: user subfolders (%s)\n", PresetManager::userSubfolder (subInfo).toRawUTF8());
+                ++failures;
+            }
+            PresetManager::userPresetFolder().getChildFile ("zz Sub").deleteRecursively();
+            if (hadFav) favFile.replaceWithText (favBackup); else favFile.deleteFile();
+            if (hadList) favList.replaceWithText (listBackup); else favList.deleteFile();
             pm.rescan();
         }
         pm.remove (saved);

@@ -14,6 +14,10 @@ public:
     void paint (juce::Graphics&) override;
     void refresh(); // preset name, page buttons (editor timer)
     void tickMeter();
+    juce::Rectangle<int> pageButtonBounds (Page p) const
+    {
+        return (p == Page::Synth ? synthBtn : p == Page::Fx ? fxBtn : seqBtn).getBounds();
+    }
 
     std::function<void (Page)> onPage;
     std::function<void()> onBrowser, onPrev, onNext, onMenu, onSave;

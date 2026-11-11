@@ -114,9 +114,13 @@ public:
 
     // Adds into the Filter 1 / Filter 2 inputs, and into `post` for audio
     // that bypasses the filters (oscillator routed to FX A / FX B / Direct).
+    // meter: if non-null, receives the peak of the oscillator, Noise 1 and Noise 2 in meter[0..2].
     void render (const UtilityParams& p, float notePitch, float fixedPitch, int n,
-                 float* f1L, float* f1R, float* f2L, float* f2R, float* postL, float* postR) noexcept
+                 float* f1L, float* f1R, float* f2L, float* f2R, float* postL, float* postR,
+                 float* meter = nullptr) noexcept
     {
+        if (meter != nullptr)
+            meter[0] = meter[1] = meter[2] = 0.0f;
         if (! p.on)
             return;
 
@@ -127,6 +131,8 @@ public:
                 continue;
             float l[kBlock] {}, r[kBlock] {};
             noise[k].render (np, notePitch, n, l, r);
+            if (meter != nullptr)
+                meter[1 + k] = peakOf (n, l, r);
             split (np.filterMix, n, l, r, f1L, f1R, f2L, f2R);
         }
 
@@ -138,6 +144,8 @@ public:
             float l[kBlock] {}, r[kBlock] {};
             for (int i = 0; i < n; ++i)
                 l[i] = r[i] = osc.tick (inc, p.oscWave, duty) * p.oscVolume;
+            if (meter != nullptr)
+                meter[0] = peakOf (n, l, r);
 
             if (p.oscRoute == RouteFilters)
                 split (p.oscFilterMix, n, l, r, f1L, f1R, f2L, f2R);
@@ -155,6 +163,14 @@ private:
     NoisePlayer noise[2];
     BlepOscillator osc;
     Rng rng;
+
+    static float peakOf (int n, const float* l, const float* r) noexcept
+    {
+        float pk = 0.0f;
+        for (int i = 0; i < n; ++i)
+            pk = std::max (pk, 0.5f * (std::abs (l[i]) + std::abs (r[i])));
+        return pk;
+    }
 
     static void split (float mixToF2, int n, const float* l, const float* r,
                        float* f1L, float* f1R, float* f2L, float* f2R) noexcept

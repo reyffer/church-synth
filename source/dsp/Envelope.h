@@ -53,6 +53,20 @@ public:
     }
     Stage getStage() const noexcept { return stage; }
     float getLevel() const noexcept { return level; }
+    // Position for the editor: stage - 1 + progress (attack 0..1, decay 1..2,
+    // sustain 2.5, release 3..4), or -1 when idle.
+    float getPosition() const noexcept
+    {
+        switch (stage)
+        {
+            case Attack: return std::clamp (t, 0.0f, 0.999f);
+            case Decay: return 1.0f + std::clamp (t, 0.0f, 0.999f);
+            case Sustain: return 2.5f;
+            case Release: return 3.0f + std::clamp (t, 0.0f, 0.999f);
+            case Idle: break;
+        }
+        return -1.0f;
+    }
 
     // Advance n samples and return the new level.
     float advance (const EnvParams& p, int n) noexcept
