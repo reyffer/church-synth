@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 
 set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
 
-project(ChurchSynth VERSION 0.3.0 LANGUAGES C CXX)
+project(ChurchSynth VERSION 0.4.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -43,6 +43,11 @@ if(CS_BUILD_TESTS)
     add_executable(cs_bench tests/bench.cpp)
     target_link_libraries(cs_bench PRIVATE cs_dsp)
     target_include_directories(cs_bench PRIVATE tests)
+
+    # Offline effect runner for the FX analysis scripts (tools/fx_analysis).
+    add_executable(cs_fxcli tools/fxcli.cpp)
+    target_link_libraries(cs_fxcli PRIVATE cs_dsp)
+    target_include_directories(cs_fxcli PRIVATE source/dsp)
 endif()
 
 # ---------------------------------------------------------------------------

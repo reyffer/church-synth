@@ -21,8 +21,8 @@ const FxInfo kFxInfo[FxTypeCount] = {
       D { 0.78f, 0.5f, 0.45f, 0.3f, 0.3f, 1.0f, 0.0f, 0.3f }, true },
     { "Pitch Shift Delay", "Spatial", P { "Time", "Pitch", "Feedback", "Harmonize", "Spray", "Stereo Detune", "Tone", "Dry/Wet" },
       D { 0.7f, 0.5f, 0.35f, 0.0f, 0.0f, 0.2f, 0.8f, 0.3f }, true },
-    { "Reverb", "Spatial", P { "Pre-Delay", "Size", "Decay", "Damping", "Low Cut", "High Cut", "Width", "Dry/Wet" },
-      D { 0.1f, 0.6f, 0.5f, 0.5f, 0.15f, 0.8f, 1.0f, 0.25f }, false },
+    { "Reverb", "Spatial", P { "Pre-Delay", "Size", "Decay", "Damping", "Low Cut", "High Cut", "Width", "Dry/Wet", "Mod Depth", "Mod Rate", "Brightness" },
+      D { 0.1f, 0.6f, 0.55f, 0.3f, 0.15f, 0.9f, 1.0f, 0.25f, 0.5f, 0.55f, 0.3f }, false },
     { "Shimmer", "Spatial", P { "Pitch", "Shimmer", "Size", "Decay", "Modulation", "High Cut", "Ducking", "Width", "Dry/Wet" },
       D { 0.667f, 0.4f, 0.7f, 0.6f, 0.3f, 0.7f, 0.0f, 1.0f, 0.3f }, false },
     { "Compressor", "Dynamics", P { "Threshold", "Ratio", "Attack", "Release", "Makeup", "Auto Makeup", "Output", "Dry/Wet" },
@@ -41,11 +41,11 @@ const FxInfo kFxInfo[FxTypeCount] = {
     { "Erode", "Distortion", P { "Mod Type", "Frequency", "Amount", "Noise Blend", "Band Freq", "Bandwidth", "Spread", "Drive", "Dry/Wet" },
       D { 0.0f, 0.6f, 0.3f, 0.0f, 0.6f, 0.5f, 0.3f, 0.0f, 0.5f }, false },
     { "Super Unison", "Modulation", P { "Voices", "Detune", "Drift", "Width", "Low Cut", "High Cut", "Dry/Wet" },
-      D { 0.43f, 0.45f, 0.3f, 1.0f, 0.0f, 1.0f, 0.6f }, false },
+      D { 0.43f, 0.342f, 0.3f, 1.0f, 0.0f, 1.0f, 0.6f }, false },
     { "Chorus", "Modulation", P { "Delay", "Depth", "Rate", "Feedback", "Voices", "Shape", "Stereo", "Dry/Wet" },
-      D { 0.3f, 0.3f, 0.3f, 0.5f, 0.33f, 0.0f, 1.0f, 0.4f }, true },
-    { "Vintage Chorus", "Modulation", P { "Mode", "Rate", "Depth", "Phase", "Dry/Wet", "Width" },
-      D { 0.0f, 0.5f, 0.5f, 1.0f, 0.5f, 1.0f }, false },
+      D { 0.806f, 0.32f, 0.46f, 0.5f, 0.33f, 0.0f, 1.0f, 0.45f }, true },
+    { "Vintage Chorus", "Modulation", P { "Mode", "Rate", "Depth", "Phase", "Dry/Wet", "Width", "Brightness", "Wide" },
+      D { 0.0f, 0.5f, 0.5f, 1.0f, 0.5f, 1.0f, 0.0f, 0.0f }, false },
     { "Flanger", "Modulation", P { "Delay", "Depth", "Rate", "Feedback", "Low Cut", "High Cut", "Stereo", "Shape", "Dry/Wet" },
       D { 0.3f, 0.5f, 0.3f, 0.75f, 0.0f, 1.0f, 0.5f, 0.0f, 0.5f }, true },
     { "Vintage Flanger", "Modulation", P { "Rate", "Delay", "Feedback", "Depth", "Wide", "Mono Input", "Dry/Wet" },
@@ -101,6 +101,11 @@ struct Biquad
     void set (float nb0, float nb1, float nb2, float na0, float na1, float na2) noexcept
     {
         b0 = nb0 / na0; b1 = nb1 / na0; b2 = nb2 / na0; a1 = na1 / na0; a2 = na2 / na0;
+    }
+    void lowpass (float f, float q, float sr) noexcept
+    {
+        const float w = 2.0f * kPi * f / sr, al = std::sin (w) / (2.0f * q), c = std::cos (w);
+        set ((1 - c) * 0.5f, 1 - c, (1 - c) * 0.5f, 1 + al, -2 * c, 1 - al);
     }
     void peak (float f, float db, float q, float sr) noexcept
     {
@@ -270,16 +275,20 @@ private:
 
 // ===========================================================================
 // Feedback-delay-network reverb (8 lines, Hadamard mixing), optional shimmer.
+// Every line's length is modulated by its own slow sine (different rates and
+// phases), which smears the pitch of the tail like a big hall / vintage digital
+// reverb and stops metallic ringing. Six all-passes diffuse the input and some of
+// the diffused signal is heard directly, so the first ~100 ms are dense, not grainy.
 class FdnReverb
 {
 public:
     void prepare (float sr)
     {
         sampleRate = sr;
-        for (auto& d : lines) d.prepare ((int) (0.2f * sr));
+        for (auto& d : lines) d.prepare ((int) (0.21f * sr));
         for (auto& d : diff) d.prepare ((int) (0.03f * sr));
         pre.prepare ((int) (0.27f * sr));
-        for (auto& s : shifter) s.prepare (sr);
+        for (auto& sh : shifter) sh.prepare (sr);
         clear();
     }
     void clear() noexcept
@@ -287,24 +296,35 @@ public:
         for (auto& d : lines) d.clear();
         for (auto& d : diff) d.clear();
         pre.clear();
-        for (auto& s : shifter) s.clear();
+        for (auto& sh : shifter) sh.clear();
         for (auto& v : damp) v = 0.0f;
-        inLow.reset(); inHigh.reset();
+        for (int k = 0; k < 8; ++k)
+        {
+            modPhase[k] = 0.125f * (float) k * 1.618f;
+            modNow[k] = modStep[k] = 0.0f;
+        }
+        modCount = 0;
+        inLow.reset(); inHigh.reset(); tilt.clear();
         shimmerFb = 0.0f;
         duckEnv = 0.0f;
+        tailEnv = 0.0f;
+        lastBright = -1.0f;
     }
 
     struct Settings
     {
         float preDelay = 0.02f, size = 0.6f, decay = 2.0f, damping = 0.5f, lowCut = 40.0f, highCut = 12000.0f;
-        float width = 1.0f, mix = 0.25f, modulation = 0.2f;
+        float width = 1.0f, mix = 0.25f;
+        float modulation = 0.2f, modRate = 0.5f; // depth 0..1, rate in Hz
+        float brightness = 0.0f;                 // 0 = neutral .. 1 = brighter tail (high shelf)
         float shimmer = 0.0f, shimmerRatio = 2.0f, ducking = 0.0f;
     };
 
     void process (float* l, float* r, int n, const Settings& s) noexcept
     {
         static constexpr float kLenMs[8] = { 31.1f, 37.3f, 41.7f, 47.9f, 53.1f, 59.3f, 67.9f, 73.7f };
-        static constexpr float kDiffMs[4] = { 4.7f, 3.6f, 12.7f, 9.3f };
+        static constexpr float kDiffMs[kDiff] = { 4.7f, 3.6f, 12.7f, 9.3f, 7.9f, 15.1f };
+        static constexpr float kModRate[8] = { 1.0f, 1.13f, 0.87f, 1.29f, 0.71f, 1.41f, 0.93f, 1.19f };
         const float scale = 0.35f + 1.65f * std::clamp (s.size, 0.0f, 1.0f);
         float len[8], gain[8];
         for (int k = 0; k < 8; ++k)
@@ -312,12 +332,27 @@ public:
             len[k] = kLenMs[k] * 0.001f * sampleRate * scale;
             gain[k] = std::pow (10.0f, -3.0f * len[k] / (std::max (s.decay, 0.1f) * sampleRate));
         }
+        float dl[kDiff];
+        for (int k = 0; k < kDiff; ++k)
+            dl[k] = kDiffMs[k] * 0.001f * sampleRate * (0.6f + 0.4f * scale);
         const float dampCoef = 0.05f + 0.9f * (1.0f - std::clamp (s.damping, 0.0f, 1.0f)) * 0.95f;
         inLow.set (filt::prewarp (s.lowCut, sampleRate));
         inHigh.set (filt::prewarp (s.highCut, sampleRate));
         const float preD = std::max (1.0f, s.preDelay * sampleRate);
-        const float modDepth = s.modulation * 0.0025f * sampleRate;
+        const float md = std::clamp (s.modulation, 0.0f, 1.0f);
+        const float modDepth = md * std::sqrt (md) * 0.006f * sampleRate; // up to 6 ms
+        float modInc[8];
+        for (int k = 0; k < 8; ++k)
+            modInc[k] = s.modRate * kModRate[k] / sampleRate;
         const float duckRel = std::exp (-1.0f / (0.25f * sampleRate));
+        tailRel = std::exp (-1.0f / (0.3f * sampleRate));
+        const float bright = std::clamp (s.brightness, 0.0f, 1.0f);
+        if (bright != lastBright)
+        {
+            tilt.shelf (2500.0f, 8.0f * bright, sampleRate, true);
+            lastBright = bright;
+        }
+        const auto& sine = SineTable::get();
 
         for (int i = 0; i < n; ++i)
         {
@@ -328,26 +363,39 @@ public:
             in -= inLow.lp (0, in);
             pre.push (in + s.shimmer * shimmerFb);
             float x = pre.read (preD);
-            for (int k = 0; k < 4; ++k) // input diffusion (series all-passes)
+            float early = 0.0f;
+            for (int k = 0; k < kDiff; ++k) // input diffusion (series all-passes)
             {
-                const float dl = kDiffMs[k] * 0.001f * sampleRate * (0.6f + 0.4f * scale);
-                const float dd = diff[k].read (dl);
-                const float v = x + 0.6f * dd;
+                const float dd = diff[k].read (dl[k]);
+                const float v = x + 0.65f * dd;
                 diff[k].push (v);
-                x = dd - 0.6f * v;
+                x = dd - 0.65f * v;
+                if (k >= 2)
+                    early += x * ((k & 1) ? -0.5f : 0.5f);
             }
 
             float o[8];
             for (int k = 0; k < 8; ++k)
             {
                 float d = len[k];
-                if (k < 4 && modDepth > 0.0f)
-                    d += modDepth * mod.at (0.25f * (float) k);
+                if (modDepth > 0.0f)
+                {
+                    // The (slow) modulation is computed every 16 samples and ramped in between.
+                    if (modCount == 0)
+                    {
+                        modPhase[k] += modInc[k] * 16.0f;
+                        modPhase[k] -= std::floor (modPhase[k]);
+                        const float target = modDepth * (0.5f + 0.5f * sine (modPhase[k]));
+                        modStep[k] = (target - modNow[k]) * (1.0f / 16.0f);
+                    }
+                    modNow[k] += modStep[k];
+                    d += modNow[k];
+                }
                 o[k] = lines[k].read (d);
                 damp[k] += dampCoef * (o[k] - damp[k]); // high-frequency damping
                 o[k] = damp[k];
             }
-            mod.tick (0.37f, sampleRate);
+            modCount = (modCount + 1) & 15;
 
             // Hadamard 8x8 mixing (fast Walsh-Hadamard transform), energy-preserving.
             float h[8];
@@ -364,22 +412,34 @@ public:
             for (int k = 0; k < 8; ++k)
                 lines[k].push (x * ((k & 1) ? -0.5f : 0.5f) + gain[k] * h[k] * norm);
 
-            float wl = o[0] - o[2] + o[4] - o[6];
-            float wr = o[1] - o[3] + o[5] - o[7];
-            wl *= 0.5f;
-            wr *= 0.5f;
-
+            // Two orthogonal mixes of all 8 lines: decorrelated left and right.
+            float wl = (o[0] - o[1] + o[2] - o[3] + o[4] - o[5] + o[6] - o[7]) * 0.35355339f;
+            float wr = (o[0] + o[1] - o[2] - o[3] + o[4] + o[5] - o[6] - o[7]) * 0.35355339f;
             if (s.shimmer > 0.0f)
             {
+                // Pitched feedback from the tail (not the early part). The loop's gain is
+                // near 1 with long decays, so it is held back once the tail gets loud
+                // (above about -10 dBFS): the shimmer builds up but never runs away.
                 const float sl = shifter[0].process (wl, s.shimmerRatio);
                 const float sr2 = shifter[1].process (wr, s.shimmerRatio);
-                shimmerFb = softClip (0.5f * (sl + sr2));
+                const float e = std::max (std::abs (wl), std::abs (wr));
+                tailEnv = e > tailEnv ? e : tailEnv * tailRel;
+                const float over = tailEnv / kShimmerCeiling;
+                const float fbGain = over > 1.0f ? 1.0f / (over * over) : 1.0f;
+                shimmerFb = softClip (0.5f * (sl + sr2)) * fbGain;
             }
+            wl += 0.35f * early;
+            wr -= 0.35f * early;
             if (s.ducking > 0.0f)
             {
                 const float g = 1.0f - s.ducking * std::min (1.0f, duckEnv * 2.0f);
                 wl *= g;
                 wr *= g;
+            }
+            if (bright > 0.0f)
+            {
+                wl = tilt.tick (0, wl);
+                wr = tilt.tick (1, wr);
             }
             applyWidth (wl, wr, s.width);
             l[i] = mixEP (l[i], wl, s.mix);
@@ -388,13 +448,17 @@ public:
     }
 
 private:
+    static constexpr int kDiff = 6;
     float sampleRate = 48000.0f;
-    Delay lines[8], diff[4], pre;
-    float damp[8] {};
+    Delay lines[8], diff[kDiff], pre;
+    float damp[8] {}, modPhase[8] {}, modNow[8] {}, modStep[8] {};
+    int modCount = 0;
     filt::OnePole inLow, inHigh;
-    FxLfo mod;
+    Biquad tilt;
+    float lastBright = -1.0f;
     PitchShifter shifter[2];
-    float shimmerFb = 0.0f, duckEnv = 0.0f;
+    float shimmerFb = 0.0f, duckEnv = 0.0f, tailEnv = 0.0f, tailRel = 0.9999f;
+    static constexpr float kShimmerCeiling = 0.3f;
 };
 
 class ReverbFx final : public Effect
@@ -416,6 +480,9 @@ public:
             s.highCut = expMap (p[5], 1000.0f, 20000.0f);
             s.width = p[6];
             s.mix = p[7];
+            s.modulation = p[8];
+            s.modRate = expMap (p[9], 0.1f, 5.0f);
+            s.brightness = p[10];
         }
         else
         {
@@ -424,7 +491,8 @@ public:
             s.shimmer = p[1] * 0.85f;
             s.size = p[2];
             s.decay = expMap (p[3], 0.5f, 30.0f);
-            s.modulation = p[4];
+            s.modulation = 0.75f * p[4];
+            s.modRate = 0.5f;
             s.highCut = expMap (p[5], 1000.0f, 20000.0f);
             s.damping = 0.6f * (1.0f - p[5]);
             s.ducking = p[6];
@@ -841,7 +909,10 @@ private:
 };
 
 // ===========================================================================
-// Super Unison: several pitch-shifted copies (constant detune) spread in stereo.
+// Super Unison: several pitch-shifted copies of the input, a separate set for
+// each side (different detunes, grain phases and drift), so left and right are
+// fully decorrelated at Width 1. The side signal is high-passed at ~250 Hz, so
+// the bass stays centred and solid.
 class SuperUnisonFx final : public Effect
 {
 public:
@@ -849,51 +920,68 @@ public:
     void prepare (float sr) override
     {
         sampleRate = sr;
-        for (auto& s : shift) s.prepare (sr);
+        for (auto& sd : shift)
+            for (auto& sh : sd) sh.prepare (sr);
         reset();
     }
     void reset() override
     {
-        for (int v = 0; v < kMax; ++v)
-        {
-            shift[v].clear();
-            shift[v].setPhase ((float) v * 0.618f); // staggered grains: no shared flutter
-        }
-        lc.reset(); hc.reset();
-        for (auto& d : drift) d = 0.0f;
+        for (int side = 0; side < 2; ++side)
+            for (int v = 0; v < kMax; ++v)
+            {
+                shift[side][v].clear();
+                shift[side][v].setPhase ((float) v * 0.618f + (float) side * 0.31f); // staggered grains: no shared flutter
+                drift[side][v] = 0.0f;
+            }
+        lc.reset(); hc.reset(); bassSide.reset();
     }
     void process (float* l, float* r, int n, const float* p, bool, const FxContext&) noexcept override
     {
         const int voices = 2 + choice (p[0], 7);
         const float cents = 100.0f * p[1] * std::sqrt (p[1]); // up to +/-100 cents, fine control at the bottom
         const float driftAmt = p[2];
-        const float width = p[3];
+        const float width = std::clamp (p[3], 0.0f, 1.0f);
         lc.set (filt::prewarp (expMap (p[4], 20.0f, 2000.0f), sampleRate));
         hc.set (filt::prewarp (expMap (p[5], 1000.0f, 20000.0f), sampleRate));
+        bassSide.set (filt::prewarp (250.0f, sampleRate), 1.414f);
         const float mix = p[6];
+        // Detune positions spread evenly over +/-cents; the right side's set sits
+        // halfway between the left side's, so the two sides never share a pitch.
         // Slow random drift per voice, updated once per block.
-        float ratio[kMax], pl[kMax], pr[kMax];
-        for (int v = 0; v < voices; ++v)
-        {
-            drift[v] += (rng.bi() * 0.5f - drift[v]) * 0.02f;
-            const float pos = voices > 1 ? -1.0f + 2.0f * (float) v / (float) (voices - 1) : 0.0f;
-            ratio[v] = std::exp2 ((pos * cents + driftAmt * drift[v] * 20.0f) / 1200.0f);
-            // Alternate sides so neighbouring detunes don't sit together.
-            const float side = (v % 2 == 0 ? 1.0f : -1.0f) * std::abs (pos);
-            panGains (side * width, pl[v], pr[v]);
-        }
+        float ratio[2][kMax];
+        for (int side = 0; side < 2; ++side)
+            for (int v = 0; v < voices; ++v)
+            {
+                auto& d = drift[side][v];
+                d += (rng.bi() * 0.5f - d) * 0.02f;
+                float pos = voices > 1 ? -1.0f + 2.0f * ((float) v + (side == 1 ? 0.5f : 0.0f)) / (float) voices : 0.0f;
+                if (side == 1 && voices > 1)
+                    pos = pos > 1.0f ? pos - 2.0f : pos;
+                ratio[side][v] = std::exp2 ((pos * cents + driftAmt * d * 20.0f) / 1200.0f);
+            }
         const float norm = 1.3f / std::sqrt ((float) voices);
+        // Width: 0 = both sides hear the average of the two sets (mono); 1 = each its own.
+        const float a = 0.5f + 0.5f * width, b = 0.5f - 0.5f * width;
         for (int i = 0; i < n; ++i)
         {
             const float in = 0.5f * (l[i] + r[i]);
-            float wl = 0.0f, wr = 0.0f;
+            float s0 = 0.0f, s1 = 0.0f;
             for (int v = 0; v < voices; ++v)
             {
-                const float y = shift[v].process (in, ratio[v]);
-                wl += y * pl[v];
-                wr += y * pr[v];
+                s0 += shift[0][v].process (in, ratio[0][v]);
+                s1 += shift[1][v].process (in, ratio[1][v]);
             }
-            wl *= norm; wr *= norm;
+            s0 *= norm; s1 *= norm;
+            float wl = a * s0 + b * s1, wr = b * s0 + a * s1;
+            // Mono bass: the side signal is high-passed (2-pole, ~250 Hz), so the
+            // lows of both sides are the same.
+            {
+                const float m = 0.5f * (wl + wr);
+                float lo = 0.0f, hi = 0.0f;
+                bassSide.tick (0, 0.5f * (wl - wr), lo, hi);
+                wl = m + hi;
+                wr = m - hi;
+            }
             wl = hc.lp (0, wl); wl -= lc.lp (0, wl);
             wr = hc.lp (1, wr); wr -= lc.lp (1, wr);
             l[i] = mixEP (l[i], wl, mix);
@@ -903,9 +991,10 @@ public:
 
 private:
     float sampleRate = 48000.0f;
-    PitchShifter shift[kMax];
-    float drift[kMax] {};
+    PitchShifter shift[2][kMax];
+    float drift[2][kMax] {};
     filt::OnePole lc, hc;
+    filt::Svf bassSide;
     Rng rng;
 };
 
@@ -931,15 +1020,22 @@ public:
         const float stereo = p[6];
         const float mix = p[7];
         float* io[2] = { l, r };
+        // Stereo: the right side's voices run on their own LFO, a little faster and
+        // offset between the left voices, so the two sides never move together.
+        const float hzR = hz * (1.0f + 0.09f * stereo);
         for (int i = 0; i < n; ++i)
         {
             lfo.tick (hz, sampleRate);
+            lfoR.tick (hzR, sampleRate);
             for (int ch = 0; ch < 2; ++ch)
             {
                 float w = 0.0f;
                 for (int v = 0; v < voices; ++v)
                 {
-                    float m = lfo.at ((float) v / (float) voices + (ch == 1 ? 0.25f * stereo : 0.0f));
+                    const float ph = (float) v / (float) voices;
+                    float m = ch == 0 ? lfo.at (ph)
+                                      : (stereo > 0.0f ? lfoR.at (ph + 0.5f / (float) voices) * stereo + lfo.at (ph) * (1.0f - stereo)
+                                                       : lfo.at (ph));
                     if (square)
                         m = softClip (m * 4.0f);
                     w += line[ch].read (base + depth * m);
@@ -955,55 +1051,69 @@ public:
 private:
     float sampleRate = 48000.0f, fb[2] {};
     Delay line[2];
-    FxLfo lfo;
+    FxLfo lfo, lfoR;
 };
 
 // ===========================================================================
-// Vintage Chorus: two bucket-brigade-style lines with the classic I / II / I+II modes.
+// Vintage Chorus: a bucket-brigade-style line with two taps, modelled on the
+// classic I / II / I+II chorus. Modes I and II have the same depth (about 1.7 to
+// 5.5 ms) and differ in rate; the left and right taps move in opposite phase and
+// are added to the dry signal with the same polarity, so it stays full in mono.
+// I + II is a fast, shallow vibrato-like shimmer and is mono (both taps together).
+// Brightness opens the dark bucket-brigade filtering up to a full-range wet signal
+// with a slight top lift; Wide stretches the delay from this tight timing to the
+// longer, deeper timing of the bigger poly synth chorus (about 14 ms, +/-4 ms).
 class VintageChorusFx final : public Effect
 {
 public:
     void prepare (float sr) override
     {
         sampleRate = sr;
-        for (auto& d : line) d.prepare ((int) (0.02f * sr));
+        line.prepare ((int) (0.04f * sr));
         reset();
     }
     void reset() override
     {
-        for (auto& d : line) d.clear();
-        pre.reset(); post.reset();
+        line.clear();
+        pre.clear(); post.clear(); lift.clear();
+        lastBright = -1.0f;
     }
     void process (float* l, float* r, int n, const float* p, bool, const FxContext&) noexcept override
     {
-        // Mode I: slow and gentle; II: faster and much deeper (about 4x the pitch
-        // movement of I); I + II: fast, shallow shimmer. Rate and Depth scale these.
-        static constexpr float kRate[3] = { 0.5f, 0.83f, 9.75f };
-        static constexpr float kDepthMs[3] = { 1.1f, 2.4f, 0.15f };
-        static constexpr float kBaseMs[3] = { 3.5f, 3.5f, 2.5f };
+        static constexpr float kRate[3] = { 0.5f, 0.85f, 9.0f };
+        static constexpr float kDepthMs[3] = { 1.9f, 1.9f, 0.15f };
+        static constexpr float kBaseMs[3] = { 3.6f, 3.6f, 3.55f };
         const int mode = choice (p[0], 3);
-        const float hz = kRate[mode] * expMap (p[1], 0.5f, 2.0f);
-        const float depth = kDepthMs[mode] * 0.001f * sampleRate * (0.3f + 1.4f * p[2]);
-        const float base = kBaseMs[mode] * 0.001f * sampleRate;
-        const float phaseOff = 0.5f * p[3]; // 1 = opposite phase on L and R (wide)
+        const float wide = std::clamp (p[7], 0.0f, 1.0f);
+        const float hz = kRate[mode] * expMap (p[1], 0.5f, 2.0f) * (1.0f - 0.3f * wide * (mode < 2 ? 1.0f : 0.0f));
+        const float baseMs = kBaseMs[mode] + wide * (14.0f - kBaseMs[mode]);
+        const float depthMs = kDepthMs[mode] + wide * ((mode < 2 ? 4.0f : 0.6f) - kDepthMs[mode]);
+        const float depth = depthMs * 0.001f * sampleRate * (0.3f + 1.4f * p[2]);
+        const float base = baseMs * 0.001f * sampleRate;
+        const float phaseOff = mode == 2 ? 0.0f : 0.5f * p[3]; // 1 = opposite phase on L and R; I+II is mono
         const float mix = p[4];
-        // Width: 0 = each side its own chorus line; 1 = the classic sum / difference
-        // output (right side gets the inverted chorus), very wide in stereo and
-        // the chorus folds back to the dry sound in mono.
-        // (needs the dry signal: fades out as Dry/Wet goes from 50 % to 100 %)
-        const float width = std::clamp (p[5], 0.0f, 1.0f) * std::clamp (2.0f * (1.0f - mix), 0.0f, 1.0f);
-        pre.set (filt::prewarp (9000.0f, sampleRate));
-        post.set (filt::prewarp (8000.0f, sampleRate));
+        const float width = std::clamp (p[5], 0.0f, 1.0f);
+        const float bright = std::clamp (p[6], 0.0f, 1.0f);
+        if (bright != lastBright)
+        {
+            // 0: dark bucket-brigade wet (rolls off above ~6 kHz, gone above ~12 kHz);
+            // 1: full range with a slight lift at the top.
+            const float fc = expMap (bright, 6000.0f, 20000.0f);
+            pre.lowpass (std::min (fc * 1.3f, 0.45f * sampleRate), 0.6f, sampleRate);
+            post.lowpass (std::min (fc, 0.45f * sampleRate), 0.75f, sampleRate);
+            lift.shelf (8000.0f, 4.0f * bright, sampleRate, true);
+            lastBright = bright;
+        }
         for (int i = 0; i < n; ++i)
         {
             lfo.tick (hz, sampleRate, true);
-            const float in = pre.lp (0, 0.5f * (l[i] + r[i]));
-            line[0].push (softClip (in * 1.2f) / 1.2f);
-            float wl = line[0].read (base + depth * lfo.at (0.0f, true));
-            float wr = line[0].read (base + depth * lfo.at (phaseOff, true));
-            wl = post.lp (0, wl);
-            wr = post.lp (1, wr);
-            wr += width * (-wl - wr);
+            const float in = pre.tick (0, 0.5f * (l[i] + r[i]));
+            line.push (softClip (in * 1.2f) / 1.2f);
+            float wl = line.read (base + depth * lfo.at (0.0f, true));
+            float wr = line.read (base + depth * lfo.at (phaseOff, true));
+            wl = lift.tick (0, post.tick (0, wl));
+            wr = lift.tick (1, post.tick (1, wr));
+            applyWidth (wl, wr, width);
             l[i] = mixEP (l[i], wl, mix);
             r[i] = mixEP (r[i], wr, mix);
         }
@@ -1011,8 +1121,9 @@ public:
 
 private:
     float sampleRate = 48000.0f;
-    Delay line[2];
-    filt::OnePole pre, post;
+    Delay line;
+    Biquad pre, post, lift;
+    float lastBright = -1.0f;
     FxLfo lfo;
 };
 

@@ -42,7 +42,7 @@ const std::vector<FactoryPreset>& factoryPresets()
           } },
         { "Warm Bed", "Pad", "Soft wavetable bed with a sine sub. Sits under a band without taking space.",
           [] (B& b) {
-              b.set ("master_vol", 0.33f); // level-matched across the factory set
+              b.set ("master_vol", 0.28f); // level-matched across the factory set
               wavetable (b, 0, "Warm Pad", 0.35f, 0.6f);
               uni (b, 0, 0, 4, 0.22f);
               b.set ("e2_on", 1.0f).set ("e2_vol", 0.35f);
@@ -73,7 +73,7 @@ const std::vector<FactoryPreset>& factoryPresets()
           } },
         { "Choir Air", "Pad", "Vocal 'ah to oo' pad with a breath layer. The mod wheel opens the vowel.",
           [] (B& b) {
-              b.set ("master_vol", 0.55f); // level-matched across the factory set
+              b.set ("master_vol", 0.46f); // level-matched across the factory set
               wavetable (b, 0, "Choir Ah to Oo", 0.2f, 0.65f);
               uni (b, 0, 0, 4, 0.2f, 0.9f);
               noise (b, 0, "Breath", 0.12f, 0.3f);
@@ -87,7 +87,7 @@ const std::vector<FactoryPreset>& factoryPresets()
           } },
         { "Strings Pad", "Pad", "Ensemble strings pad with a slow bow. Velocity shapes the brightness.",
           [] (B& b) {
-              b.set ("master_vol", 0.33f); // level-matched across the factory set
+              b.set ("master_vol", 0.40f); // level-matched across the factory set
               wavetable (b, 0, "String Ensemble", 0.4f, 0.6f);
               uni (b, 0, 0, 5, 0.28f);
               b.set ("e2_on", 1.0f).set ("e2_vol", 0.3f);
@@ -102,7 +102,7 @@ const std::vector<FactoryPreset>& factoryPresets()
           } },
         { "Shimmer Swell", "Pad", "Slow supersaw swell into an octave shimmer. Hold a chord and let it bloom.",
           [] (B& b) {
-              b.set ("master_vol", 0.58f); // level-matched across the factory set
+              b.set ("master_vol", 0.45f); // level-matched across the factory set
               osc (b, 0, 0, kSaw, 0.9f);
               uni (b, 0, 2, 7, 0.3f, 1.0f);
               b.set ("e1_uni_mix", 0.65f).set ("e1_vol", 0.55f);
@@ -115,7 +115,7 @@ const std::vector<FactoryPreset>& factoryPresets()
           } },
         { "Evolving Light", "Pad", "Two wavetables drifting on random and function modulation. Never quite the same twice.",
           [] (B& b) {
-              b.set ("master_vol", 0.67f); // level-matched across the factory set
+              b.set ("master_vol", 0.59f); // level-matched across the factory set
               wavetable (b, 0, "Shimmer Evolve", 0.2f, 0.5f);
               wavetable (b, 1, "Airy Pad", 0.6f, 0.4f);
               uni (b, 0, 0, 3, 0.2f);
@@ -186,7 +186,7 @@ const std::vector<FactoryPreset>& factoryPresets()
           } },
         { "Soft Keys", "Keys", "Gentle triangle keys that decay into a soft sustain. Good for verses.",
           [] (B& b) {
-              b.set ("master_vol", 0.51f); // level-matched across the factory set
+              b.set ("master_vol", 0.43f); // level-matched across the factory set
               osc (b, 0, 0, kTri, 0.9f);
               osc (b, 0, 1, kSine, 0.4f, 12.0f, 0.03f);
               b.set ("e1_vol", 0.7f);
@@ -202,7 +202,7 @@ const std::vector<FactoryPreset>& factoryPresets()
           } },
         { "Stage Keys", "Keys", "Brighter filtered keys with a little key click. Cuts through a full band.",
           [] (B& b) {
-              b.set ("master_vol", 0.48f); // level-matched across the factory set
+              b.set ("master_vol", 0.42f); // level-matched across the factory set
               osc (b, 0, 0, kSaw, 0.7f);
               osc (b, 0, 1, kSquare, 0.4f, 12.0f, 0.0f, 0.3f);
               b.set ("e1_vol", 0.6f);
@@ -233,7 +233,7 @@ const std::vector<FactoryPreset>& factoryPresets()
           } },
         { "Pipe Organ", "Keys", "Church pipe organ with a flute rank and a big stone room.",
           [] (B& b) {
-              b.set ("master_vol", 0.21f); // level-matched across the factory set
+              b.set ("master_vol", 0.26f); // level-matched across the factory set
               wavetable (b, 0, "Pipe Organ", 0.4f, 0.55f);
               wavetable (b, 1, "Flute Pipe", 0.3f, 0.35f);
               b.set ("e2_coarse", 12.0f);
@@ -247,9 +247,10 @@ const std::vector<FactoryPreset>& factoryPresets()
           } },
         { "Glass Keys", "Keys", "Bell-like glass keys with a quarter-note echo.",
           [] (B& b) {
-              b.set ("master_vol", 1.00f); // level-matched across the factory set
+              b.set ("master_vol", 1.0f); // level-matched across the factory set
               wavetable (b, 0, "Glass", 0.45f, 1.0f);
               filter (b, 0, kLP12, 5000.0f, 0.05f, 0.4f);
+              b.set ("f1_vol", 1.16f);
               env (b, "env1", 0.0f, 2.4f, 0.0f, 1.2f);
               b.set ("amp_velo", 0.6f);
               b.route ("Velocity", "e1_wt_pos", 0.25f);
@@ -336,7 +337,7 @@ const std::vector<FactoryPreset>& factoryPresets()
         // ------------------------------------------------------------------ LEADS
         { "Soft Lead", "Lead", "Mellow square lead with glide; the mod wheel adds vibrato.",
           [] (B& b) {
-              b.set ("master_vol", 0.61f); // level-matched across the factory set
+              b.set ("master_vol", 0.50f); // level-matched across the factory set
               osc (b, 0, 0, kSquare, 0.8f, 0.0f, 0.0f, 0.4f);
               osc (b, 0, 1, kSaw, 0.3f, 0.0f, 0.06f);
               b.set ("e1_vol", 0.95f);
@@ -484,7 +485,7 @@ const std::vector<FactoryPreset>& factoryPresets()
           } },
         { "Cello Swell", "Strings/Brass", "Expressive mono cello-like swell; aftertouch and mod wheel add vibrato.",
           [] (B& b) {
-              b.set ("master_vol", 0.73f); // level-matched across the factory set
+              b.set ("master_vol", 0.53f); // level-matched across the factory set
               wavetable (b, 0, "String Ensemble", 0.6f, 0.85f);
               b.set ("e2_on", 1.0f).set ("e2_vol", 0.6f);
               osc (b, 1, 0, kSaw, 0.8f);
@@ -525,7 +526,7 @@ const std::vector<FactoryPreset>& factoryPresets()
           } },
         { "Vinyl Air", "Texture", "Dusty vinyl crackle on an airy pad: an instant lo-fi bed.",
           [] (B& b) {
-              b.set ("master_vol", 0.62f); // level-matched across the factory set
+              b.set ("master_vol", 0.45f); // level-matched across the factory set
               wavetable (b, 0, "Airy Pad", 0.4f, 0.5f);
               uni (b, 0, 0, 3, 0.2f);
               noise (b, 0, "Vinyl Crackle", 0.35f, 0.2f);
@@ -573,7 +574,7 @@ const std::vector<FactoryPreset>& factoryPresets()
           } },
         { "Ambient Arp", "Sequence", "Up and down arpeggio of glass tones in eighths, into shimmer.",
           [] (B& b) {
-              b.set ("master_vol", 0.61f); // level-matched across the factory set
+              b.set ("master_vol", 0.53f); // level-matched across the factory set
               wavetable (b, 0, "Glass Pad", 0.35f, 0.95f);
               filter (b, 0, kLP12, 4500.0f, 0.1f, 0.3f);
               env (b, "env1", 0.005f, 1.0f, 0.2f, 1.2f);
@@ -635,7 +636,7 @@ const std::vector<FactoryPreset>& factoryPresets()
           } },
         { "Transition Swell", "FX", "Reverse-sounding swell into a long shimmer tail. Great between songs.",
           [] (B& b) {
-              b.set ("master_vol", 0.40f); // level-matched across the factory set
+              b.set ("master_vol", 0.48f); // level-matched across the factory set
               wavetable (b, 0, "Airy Pad", 0.5f, 0.55f);
               uni (b, 0, 0, 4, 0.25f);
               filter (b, 0, kLP12, 2000.0f, 0.15f);
@@ -723,6 +724,8 @@ const std::vector<FactoryFxPreset>& factoryFxPresets()
         { FxReverb, "Cathedral", { { 0, 0.25f }, { 1, 0.95f }, { 2, 0.88f }, { 3, 0.4f }, { 5, 0.7f } } },
         { FxReverb, "Slap", { { 0, 0.4f }, { 1, 0.15f }, { 2, 0.15f }, { 3, 0.6f } } },
         { FxReverb, "Echoes", { { 0, 0.7f }, { 1, 0.6f }, { 2, 0.7f }, { 3, 0.3f } } },
+        { FxReverb, "Lush Modulated", { { 2, 0.58f }, { 8, 0.6f }, { 9, 0.65f }, { 10, 0.7f } } }, // big vintage poly reverb
+        { FxReverb, "Dark Still", { { 2, 0.55f }, { 3, 0.55f }, { 5, 0.75f }, { 8, 0.15f }, { 10, 0.0f } } },
         // Delay: Time, Fine, Feedback, Low Cut, High Cut, Width, Ping-Pong, Dry/Wet (sync it for note values)
         { FxDelay, "Slapback", { { 0, 0.42f }, { 2, 0.1f }, { 7, 0.25f } } },
         { FxDelay, "Long Echo", { { 0, 0.85f }, { 2, 0.45f }, { 4, 0.55f }, { 7, 0.3f } } },
@@ -738,6 +741,8 @@ const std::vector<FactoryFxPreset>& factoryFxPresets()
         { FxVintageChorus, "Mode I", { { 0, 0.15f } } },
         { FxVintageChorus, "Mode II", { { 0, 0.5f } } },
         { FxVintageChorus, "Mode I + II", { { 0, 0.85f } } },
+        { FxVintageChorus, "Wide Poly", { { 0, 0.15f }, { 6, 1.0f }, { 7, 1.0f } } }, // the bigger poly synth chorus
+        { FxVintageChorus, "Bright Mode II", { { 0, 0.5f }, { 6, 0.6f } } },
         // Compressor: Threshold, Ratio, Attack, Release, Makeup, Auto Makeup, Output, Dry/Wet
         { FxCompressor, "Gentle Glue", { { 0, 0.7f }, { 1, 0.2f }, { 2, 0.4f }, { 3, 0.5f } } },
         { FxCompressor, "Pad Leveller", { { 0, 0.55f }, { 1, 0.4f }, { 2, 0.5f }, { 3, 0.6f } } },

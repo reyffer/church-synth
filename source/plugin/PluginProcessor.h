@@ -134,6 +134,10 @@ private:
     void timerCallback() override;
     void readFxTypes (int* types) const;
     void applyFxDefaults (int slot, int type);
+public:
+    static constexpr int kStateVersion = 5; // 5: v0.4 effects (see migrateState)
+    static void migrateState (juce::ValueTree& tree);
+private:
     std::vector<std::atomic<float>*> rawParams;
     juce::AudioFormatManager formats;
 

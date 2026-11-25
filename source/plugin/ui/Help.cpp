@@ -146,9 +146,22 @@ const std::vector<std::pair<std::regex, const char*>>& rules()
     return r;
 }
 
-// Effect controls, by their display name.
-const char* fxControlHelp (const juce::String& name)
+// Effect controls, by effect and display name ("Effect/Control"), then by name.
+const char* fxControlHelp (const juce::String& effect, const juce::String& name)
 {
+    static const std::vector<std::pair<const char*, const char*>> specific {
+        { "Vintage Chorus/Brightness", "opens the dark, classic bucket-brigade sound (0) up to a full-range chorus with a slight top lift (1)" },
+        { "Vintage Chorus/Wide", "stretches the short classic chorus (0) to the longer, deeper and wider chorus of a big poly synth (1)" },
+        { "Vintage Chorus/Width", "stereo width of the chorus (0 = mono)" },
+        { "Reverb/Brightness", "lifts the highs of the tail: a brighter, more open reverb" },
+        { "Reverb/Mod Depth", "how much the tail's pitch drifts: smooths metallic ringing, gives a lush, chorused tail" },
+        { "Reverb/Mod Rate", "speed of the tail's drift" },
+        { "Super Unison/Width", "0 = mono, 1 = left and right have their own voices (very wide); the bass stays centred" },
+        { "Super Unison/Detune", "how far apart the copies are tuned (about +/-20 cents by default)" },
+    };
+    for (const auto& [n, text] : specific)
+        if ((effect + "/" + name).equalsIgnoreCase (n))
+            return text;
     static const std::vector<std::pair<const char*, const char*>> t {
         { "Dry/Wet", "balance between the original and the effect" },
         { "Feedback", "how much is fed back: more repeats (delay) or a stronger sweep (flanger, phaser)" },
@@ -160,7 +173,7 @@ const char* fxControlHelp (const juce::String& name)
         { "Speed", "rotary speed: Slow (chorale) or Fast (tremolo). MIDI-learn it to a switch or route the mod wheel" },
         { "Brake", "stops the rotary speaker" }, { "Horn/Drum", "balance of the treble horn and the bass drum" },
         { "Ramp", "how long the rotors take to change speed" },
-        { "Mode", "Vintage Chorus: I is gentle, II is deeper, I + II is a fast shimmer" },
+        { "Mode", "Vintage Chorus: I is slow, II is faster with the same depth, I + II is a fast, mono shimmer" },
         { "Low Cut", "removes lows from the effect" }, { "High Cut", "removes highs from the effect" },
         { "Threshold", "level where the compressor starts working" }, { "Ratio", "how strongly it compresses" },
         { "Attack", "how fast it reacts" }, { "Release", "how fast it lets go" }, { "Makeup", "level after compression" },
@@ -195,7 +208,7 @@ juce::String paramHelp (UiContext& ctx, const juce::String& paramId)
         if (k >= 0 && k < cs::fx::kFxParams && info.params[(size_t) k] != nullptr)
         {
             name = juce::String (info.name) + " " + info.params[(size_t) k];
-            if (const char* h = fxControlHelp (info.params[(size_t) k]))
+            if (const char* h = fxControlHelp (info.name, info.params[(size_t) k]))
                 text = h;
         }
     }

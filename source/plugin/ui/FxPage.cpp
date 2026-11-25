@@ -17,7 +17,7 @@ juce::StringArray fxChoices (int type, int k)
     using namespace cs::fx;
     const juce::String name = fxInfo (type).params[(size_t) k] != nullptr ? fxInfo (type).params[(size_t) k] : "";
     if (name == "Ping-Pong" || name == "Auto Makeup" || name == "Auto Gain" || name == "Dark" || name == "Invert"
-        || name == "Mono Bass" || name == "Natural Law" || name == "Wide" || name == "Mono Input" || name == "Brake")
+        || name == "Mono Bass" || name == "Natural Law" || (name == "Wide" && type != FxVintageChorus) || name == "Mono Input" || name == "Brake")
         return { "Off", "On" };
     switch (type)
     {

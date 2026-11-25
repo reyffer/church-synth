@@ -122,6 +122,7 @@ juce::ValueTree PresetBuilder::build (const juce::String& name, const juce::Stri
         t.setProperty ("macroName" + juce::String (m + 1), macroNames[m].isEmpty() ? "Macro " + juce::String (m + 1) : macroNames[m], nullptr);
     t.setProperty ("presetName", name, nullptr);
     t.setProperty ("presetCategory", category, nullptr);
+    t.setProperty ("stateVersion", ChurchSynthProcessor::kStateVersion, nullptr); // built with today's controls: no migration
     return t;
 }
 
@@ -745,6 +746,14 @@ std::vector<PresetManager::FxPresetInfo> PresetManager::fxPresets (int type)
         v.addTokens (f.loadFileAsString().trim(), " ", {});
         for (int k = 0; k < cs::fx::kFxParams && k < v.size(); ++k)
             p.values[(size_t) k] = juce::jlimit (0.0f, 1.0f, v[k].getFloatValue());
+        // Saved before v0.4 (no "v2" marker): the Reverb's new controls get their
+        // modulation defaults and neutral brightness, as in ChurchSynthProcessor::migrateState.
+        if (type == cs::fx::FxReverb && ! v.contains ("v2"))
+        {
+            p.values[8] = info.defaults[8];
+            p.values[9] = info.defaults[9];
+            p.values[10] = 0.0f;
+        }
         r.push_back (p);
     }
     return r;
@@ -773,6 +782,7 @@ bool PresetManager::saveFxPreset (int slot, const juce::String& name, juce::Stri
     juce::String s;
     for (int k = 0; k < cs::fx::kFxParams; ++k)
         s << juce::String (proc.apvts.getRawParameterValue (base + "p" + juce::String (k + 1))->load(), 4) << " ";
+    s << "v2"; // format marker (v0.4 effect controls)
     const auto file = folder.getChildFile (safeFileName (name) + ".csfx");
     if (! file.replaceWithText (s.trim()))
     {

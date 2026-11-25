@@ -343,6 +343,75 @@ static void testDriveAddsHarmonics()
 }
 
 
+// v0.4 effects: Vintage Chorus stays full in mono (its wet doesn't cancel), I + II is
+// mono; Super Unison decorrelates the sides above the bass and keeps the bass centred;
+// the Reverb's Brightness lifts the tail's highs.
+static void testFxV04Character()
+{
+    auto runFx = [] (int type, std::initializer_list<std::pair<int, float>> knobs, std::vector<float>& l, std::vector<float>& r) {
+        auto e = fx::makeEffect (type, 48000.0f);
+        float p[fx::kFxParams] {};
+        const auto& d = fx::fxInfo (type).defaults;
+        for (int k = 0; k < fx::kFxParams; ++k) p[k] = d[(size_t) k];
+        for (const auto& kv : knobs) p[kv.first] = kv.second;
+        fx::FxContext fc;
+        for (size_t i = 0; i < l.size(); i += 256)
+            e->process (l.data() + i, r.data() + i, (int) std::min<size_t> (256, l.size() - i), p, false, fc);
+    };
+    const int n = 48000 * 3;
+    Rng rng;
+    std::vector<float> noise ((size_t) n);
+    for (auto& v : noise) v = 0.3f * rng.bi();
+    auto onePoleLp = [] (const std::vector<float>& x, float hz) {
+        std::vector<float> y (x.size());
+        const float a = 1.0f - std::exp (-2.0f * 3.14159265f * hz / 48000.0f);
+        float z = 0.0f;
+        for (size_t i = 0; i < x.size(); ++i) y[i] = z += a * (x[i] - z);
+        return y;
+    };
+    auto corr = [] (const std::vector<float>& a, const std::vector<float>& b, size_t from) {
+        double ab = 0, aa = 0, bb = 0;
+        for (size_t i = from; i < a.size(); ++i) { ab += (double) a[i] * b[i]; aa += (double) a[i] * a[i]; bb += (double) b[i] * b[i]; }
+        return ab / std::sqrt (aa * bb + 1e-30);
+    };
+    {
+        // Mode I at 100 % wet: the mono sum still carries the chorus (old sum/difference cancelled it).
+        auto l = noise, r = noise;
+        runFx (fx::FxVintageChorus, { { 0, 0.0f }, { 4, 1.0f } }, l, r);
+        double m = 0, x = 0;
+        for (size_t i = 24000; i < l.size(); ++i) { const double s2 = 0.5 * (l[i] + r[i]); m += s2 * s2; x += (double) noise[i] * noise[i]; }
+        CHECK (10.0 * std::log10 (m / x) > -12.0, "Vintage Chorus: the wet survives in mono");
+        CHECK (corr (l, r, 24000) < 0.9, "Vintage Chorus mode I is stereo");
+        auto l2 = noise, r2 = noise;
+        runFx (fx::FxVintageChorus, { { 0, 0.9f } }, l2, r2);
+        float diff = 0.0f;
+        for (size_t i = 0; i < l2.size(); ++i) diff = std::max (diff, std::abs (l2[i] - r2[i]));
+        CHECK (diff < 1.0e-6f, "Vintage Chorus I + II is mono");
+    }
+    {
+        auto l = noise, r = noise;
+        runFx (fx::FxSuperUnison, { { 6, 1.0f } }, l, r);
+        auto lowL = onePoleLp (onePoleLp (l, 80.0f), 80.0f), lowR = onePoleLp (onePoleLp (r, 80.0f), 80.0f);
+        std::vector<float> hiL (l.size()), hiR (r.size());
+        auto lpL = onePoleLp (l, 1000.0f), lpR = onePoleLp (r, 1000.0f);
+        for (size_t i = 0; i < l.size(); ++i) { hiL[i] = l[i] - lpL[i]; hiR[i] = r[i] - lpR[i]; }
+        CHECK (std::abs (corr (hiL, hiR, 24000)) < 0.25, "Super Unison: decorrelated sides at full width");
+        CHECK (corr (lowL, lowR, 24000) > 0.8, "Super Unison: centred bass");
+    }
+    {
+        auto hfShare = [&] (float bright) {
+            std::vector<float> l ((size_t) n, 0.0f), r ((size_t) n, 0.0f);
+            for (int i = 0; i < 4800; ++i) l[(size_t) i] = r[(size_t) i] = noise[(size_t) i];
+            runFx (fx::FxReverb, { { 7, 1.0f }, { 10, bright } }, l, r);
+            auto lp = onePoleLp (l, 3000.0f);
+            double hi = 0, lo = 0;
+            for (size_t i = 24000; i < l.size(); ++i) { const double h = l[i] - lp[i]; hi += h * h; lo += (double) lp[i] * lp[i]; }
+            return 10.0 * std::log10 (hi / lo);
+        };
+        CHECK (hfShare (1.0f) - hfShare (0.0f) > 3.0, "Reverb: Brightness lifts the tail's highs");
+    }
+}
+
 // Rotary: on Fast the horn spins at about 6.7 Hz (level wobble on a high tone at that
 // rate); Slow is much slower; it ramps between the two instead of jumping.
 static void testRotarySpeeds()
@@ -1892,6 +1961,7 @@ int main()
 {
     testDriveAddsHarmonics();
     testRotarySpeeds();
+    testFxV04Character();
     testSeqGenerate();
     testInstantAttackAndWidth();
     testNoiseSwapMidNote();

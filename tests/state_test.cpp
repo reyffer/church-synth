@@ -52,6 +52,13 @@ static void snapshotEditor (ChurchSynthProcessor& p, const juce::File& dir)
             prm->setValueNotifyingHost (v);
     ed->showView (1, 1, 1);
     shot ("fx_eq_dist");
+    // v0.4 effects: Reverb (11 controls), Vintage Chorus (Brightness, Wide), Super Unison.
+    for (auto [id, t] : { std::pair<const char*, int> { "fx_b1_type", cs::fx::FxReverb }, { "fx_b2_type", cs::fx::FxVintageChorus }, { "fx_b3_type", cs::fx::FxSuperUnison } })
+        if (auto* prm = p.apvts.getParameter (id))
+            prm->setValueNotifyingHost (prm->convertTo0to1 ((float) t));
+    p.syncEffects();
+    ed->showView (1, 1, 1);
+    shot ("fx_reverb_vintage_unison");
     ed->showView (2, 1); shot ("seq");
     // Live views: sound LEDs, travelling dots, mod links (audio runs while the editor's timers tick).
     {
@@ -283,6 +290,60 @@ static double heapMB()
     return 0.0;
 #endif
 }
+// --render-fx <signals dir> <out dir> [type params name]: runs the FX analysis test
+// signals (tools/fx_analysis/gen_signals.py) through effects offline. With no job
+// given it renders the standard set used against the reference renders.
+static int renderFx (const juce::File& sigDir, const juce::File& outDir, int argc, char** argv)
+{
+    struct Job { juce::String name; int type; juce::String params; };
+    std::vector<Job> jobs;
+    if (argc >= 7)
+        jobs.push_back ({ argv[6], juce::String (argv[4]).getIntValue(), argv[5] });
+    else
+        jobs = { { "cs_reverb", cs::fx::FxReverb, "-" }, { "cs_superUnison", cs::fx::FxSuperUnison, "-" },
+                 { "cs_chorus", cs::fx::FxChorus, "-" }, { "cs_vintI", cs::fx::FxVintageChorus, "0.0" },
+                 { "cs_vintII", cs::fx::FxVintageChorus, "0.5" }, { "cs_vintI+II", cs::fx::FxVintageChorus, "0.9" },
+                 { "cs_vintWide", cs::fx::FxVintageChorus, "0.0,-,-,-,-,-,1,1" },
+                 { "cs_reverbLush", cs::fx::FxReverb, "-,-,0.58,-,-,-,-,-,0.6,0.65,0.7" } };
+    outDir.createDirectory();
+    juce::AudioFormatManager fm;
+    fm.registerBasicFormats();
+    juce::WavAudioFormat wav;
+    int written = 0;
+    for (const auto& f : sigDir.findChildFiles (juce::File::findFiles, false, "*.wav"))
+    {
+        std::unique_ptr<juce::AudioFormatReader> rd (fm.createReaderFor (f));
+        if (rd == nullptr)
+            continue;
+        juce::AudioBuffer<float> in (2, (int) rd->lengthInSamples);
+        rd->read (&in, 0, (int) rd->lengthInSamples, 0, true, true);
+        for (const auto& j : jobs)
+        {
+            float p[cs::fx::kFxParams];
+            const auto& info = cs::fx::fxInfo (j.type);
+            for (int k = 0; k < cs::fx::kFxParams; ++k)
+                p[k] = info.defaults[(size_t) k];
+            juce::StringArray tok;
+            tok.addTokens (j.params, ",", {});
+            for (int k = 0; k < tok.size() && k < cs::fx::kFxParams; ++k)
+                if (tok[k] != "-" && tok[k].isNotEmpty())
+                    p[k] = tok[k].getFloatValue();
+            auto fx = cs::fx::makeEffect (j.type, (float) rd->sampleRate);
+            juce::AudioBuffer<float> b (in);
+            cs::fx::FxContext fctx;
+            for (int i = 0; i < b.getNumSamples(); i += 256)
+                fx->process (b.getWritePointer (0, i), b.getWritePointer (1, i), std::min (256, b.getNumSamples() - i), p, false, fctx);
+            const auto out = outDir.getChildFile (j.name + "_" + f.getFileName());
+            out.deleteFile();
+            std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (new juce::FileOutputStream (out), rd->sampleRate, 2, 32, {}, 0));
+            if (w != nullptr && w->writeFromAudioSampleBuffer (b, 0, b.getNumSamples()))
+                ++written;
+        }
+    }
+    std::printf ("%d files written to %s\n", written, outDir.getFullPathName().toRawUTF8());
+    return written > 0 ? 0 : 1;
+}
+
 static int memReport (int instances)
 {
     auto row = [] (const char* what) { std::printf ("%-46s RSS %7.1f MB   heap %7.1f MB\n", what, rssMB(), heapMB()); };
@@ -658,6 +719,8 @@ int main (int argc, char** argv)
         return fuzzParams (argc > 2 ? juce::String (argv[2]).getIntValue() : 50);
     if (argc > 1 && juce::String (argv[1]) == "--stress-threads")
         return stressThreads (argc > 2 ? juce::String (argv[2]).getDoubleValue() : 10.0, argc > 3 ? juce::String (argv[3]).getIntValue() : 7);
+    if (argc > 3 && juce::String (argv[1]) == "--render-fx")
+        return renderFx (juce::File (argv[2]), juce::File (argv[3]), argc, argv);
     if (argc > 1 && juce::String (argv[1]) == "--mem-report")
         return memReport (argc > 2 ? juce::String (argv[2]).getIntValue() : 4);
     if (argc > 3 && juce::String (argv[1]) == "--render-pack")
@@ -960,6 +1023,28 @@ int main (int argc, char** argv)
             else
                 tagFile.deleteFile();
             pm.rescan();
+        }
+        // States from before v0.4: the Reverb's new controls get their defaults.
+        {
+            PresetBuilder b;
+            b.fx (0, cs::fx::FxReverb, {});
+            auto t = b.build ("zz migrate", "Pad");
+            const auto check = [&] (const char* what, float p9, float p11) {
+                const float a = p.apvts.getRawParameterValue ("fx_a1_p9")->load(), c = p.apvts.getRawParameterValue ("fx_a1_p11")->load();
+                if (std::abs (a - p9) > 1e-4f || std::abs (c - p11) > 1e-4f)
+                {
+                    std::printf ("FAIL: %s (p9 %.3f, p11 %.3f)\n", what, a, c);
+                    ++failures;
+                }
+            };
+            p.restoreStateTree (t, ChurchSynthProcessor::LoadKind::Preset);
+            check ("v0.4 state keeps its reverb controls", cs::fx::fxInfo (cs::fx::FxReverb).defaults[8], cs::fx::fxInfo (cs::fx::FxReverb).defaults[10]);
+            auto old = t.createCopy();
+            old.setProperty ("stateVersion", 4, nullptr);
+            for (const char* id : { "fx_a1_p9", "fx_a1_p10", "fx_a1_p11" })
+                old.getChildWithProperty ("id", id).setProperty ("value", 0.0f, nullptr);
+            p.restoreStateTree (old, ChurchSynthProcessor::LoadKind::Preset);
+            check ("old state gets the reverb's modulation defaults", cs::fx::fxInfo (cs::fx::FxReverb).defaults[8], 0.0f);
         }
         // Favourite folders (playlists) and User subfolders.
         {

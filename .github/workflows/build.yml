@@ -71,6 +71,14 @@ jobs:
           ditto -c -k --keepParent "$ART/AU/Church Synth.component" "dist/ChurchSynth-AU-mac.zip"
           ditto -c -k --keepParent "$ART/VST3/Church Synth.vst3" "dist/ChurchSynth-VST3-mac.zip"
           ditto -c -k --keepParent "$ART/Standalone/Church Synth.app" "dist/ChurchSynth-Standalone-mac.zip"
+          # One-click installer: both plug-ins + the install script (clears quarantine, signs, runs auval).
+          INST="dist/Church Synth Installer"
+          mkdir -p "$INST"
+          cp -R "$ART/AU/Church Synth.component" "$ART/VST3/Church Synth.vst3" "$INST/"
+          cp installer/Install_Church_Synth.command installer/README.txt "$INST/"
+          chmod +x "$INST/Install_Church_Synth.command"
+          ditto -c -k --keepParent "$INST" "dist/ChurchSynth-Mac-Installer.zip"
+          rm -rf "$INST"
 
       - uses: actions/upload-artifact@v4
         with:

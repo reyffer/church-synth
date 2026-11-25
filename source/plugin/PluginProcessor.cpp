@@ -816,7 +816,7 @@ juce::AudioProcessorEditor* ChurchSynthProcessor::createEditor()
 juce::ValueTree ChurchSynthProcessor::createStateTree()
 {
     auto state = apvts.copyState();
-    state.setProperty ("stateVersion", 4, nullptr);
+    state.setProperty ("stateVersion", kStateVersion, nullptr);
     {
         const juce::ScopedLock sl (routeLock);
         state.removeChild (state.getChildWithName ("ROUTES"), nullptr);
@@ -873,6 +873,36 @@ juce::ValueTree ChurchSynthProcessor::createStateTree()
     return state;
 }
 
+// States saved before v0.4 (stateVersion < 5): the Reverb gained Mod Depth, Mod Rate
+// and Brightness (P9-P11), stored as 0 in older states. Give them the new modulation
+// defaults and neutral brightness (the old tone).
+void ChurchSynthProcessor::migrateState (juce::ValueTree& tree)
+{
+    if ((int) tree.getProperty ("stateVersion", 0) >= 5)
+        return;
+    auto setParam = [&tree] (const juce::String& id, float v) {
+        auto child = tree.getChildWithProperty ("id", id);
+        if (! child.isValid())
+        {
+            child = juce::ValueTree ("PARAM");
+            child.setProperty ("id", id, nullptr);
+            tree.appendChild (child, nullptr);
+        }
+        child.setProperty ("value", v, nullptr);
+    };
+    const auto& rv = cs::fx::fxInfo (cs::fx::FxReverb);
+    for (int sl = 0; sl < cs::fx::kNumFxSlots; ++sl)
+    {
+        const auto typeChild = tree.getChildWithProperty ("id", fxParamId (sl, "type"));
+        if (! typeChild.isValid() || (int) std::lround ((float) typeChild["value"]) != cs::fx::FxReverb)
+            continue;
+        setParam (fxParamId (sl, "p9"), rv.defaults[8]);
+        setParam (fxParamId (sl, "p10"), rv.defaults[9]);
+        setParam (fxParamId (sl, "p11"), 0.0f);
+    }
+    tree.setProperty ("stateVersion", kStateVersion, nullptr);
+}
+
 void ChurchSynthProcessor::restoreStateTree (const juce::ValueTree& source, LoadKind kind)
 {
     if (! source.isValid())
@@ -886,6 +916,7 @@ void ChurchSynthProcessor::restoreStateTree (const juce::ValueTree& source, Load
     } guard (restoring);
     auto tree = source.createCopy();
     tree.removeProperty ("presetFormat", nullptr);
+    migrateState (tree);
 
     // Seq Lock: a preset load keeps the current pattern and sequencer settings.
     const bool keepSeq = kind == LoadKind::Preset && apvts.getRawParameterValue ("seq_lock")->load() >= 0.5f;
