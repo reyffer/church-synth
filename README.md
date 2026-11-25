@@ -28,7 +28,7 @@ Every successful build is published to the **Latest build** release:
 
 ### Mac (MainStage / Logic)
 
-Easiest: download and unzip `ChurchSynth-Mac-Installer.zip`, then double-click **Install_Church_Synth.command** (the first time: right-click > Open). It installs the AU and VST3 for your user, clears the download quarantine, signs them for this Mac and runs Apple's AU validator. Quit and reopen MainStage.
+Easiest: download and unzip `ChurchSynth-Mac-Installer.zip`, then double-click **Install_Church_Synth.command**. If macOS says it "could not verify" the script (a browser download is quarantined and the script isn't Apple-signed), use System Settings > Privacy & Security > Open Anyway, or run `xattr -dr com.apple.quarantine` on the unzipped folder first. It installs the AU and VST3 for your user, clears the download quarantine, signs them for this Mac and runs Apple's AU validator. Quit and reopen MainStage.
 
 By hand:
 
