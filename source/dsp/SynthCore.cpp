@@ -31,6 +31,8 @@ void SynthCore::reset() noexcept
     numHeld = 0;
     sustainPedal = false;
     bend = 0.0f;
+    organPerc[0] = organPerc[1] = 0.0f;
+    organPercTrigger = false;
     seq.reset();
     for (auto& k : keyDown)
         k = false;
@@ -151,6 +153,30 @@ void SynthCore::tickGlobalSources (int n, double blockPpq) noexcept
     monoTrigger = legatoTrigger = false;
 }
 
+// Organ engine: the tonewheel clock, and the shared percussion decay per engine slot
+// (one per instance, like the original's single percussion circuit).
+void SynthCore::tickOrgan (int n) noexcept
+{
+    global.organClock = organClock;
+    organClock += (double) n / (double) sampleRate;
+    for (int e = 0; e < kNumEngines; ++e)
+    {
+        const auto& ep = params.engine[(size_t) e];
+        if (organPercTrigger)
+            organPerc[e] = 1.0f;
+        global.organPerc[e][0] = organPerc[e];
+        if (organPerc[e] > 0.0f)
+        {
+            const float tau = ep.org.percSlow ? 0.42f : 0.13f; // seconds
+            organPerc[e] *= std::exp (-(float) n / (tau * sampleRate));
+            if (organPerc[e] < 1.0e-5f)
+                organPerc[e] = 0.0f;
+        }
+        global.organPerc[e][1] = organPerc[e];
+    }
+    organPercTrigger = false;
+}
+
 int SynthCore::activeVoiceCount() const noexcept
 {
     int c = 0;
@@ -261,7 +287,10 @@ void SynthCore::playNoteOn (int note, float velocity, bool fromSeq) noexcept
     ++stamp;
     monoTrigger = true;
     if (numHeld == 0)
+    {
         legatoTrigger = true;
+        organPercTrigger = true; // organ percussion restarts only after every key is up
+    }
     if (isMono())
         monoNoteOn (note, velocity);
     else
@@ -362,7 +391,7 @@ void SynthCore::updateSeqState() noexcept
     chordArp = false;
     if (on && params.seq.mode == SeqModeArp)
         for (const auto& e : params.engine)
-            if (e.on && e.unisonOn && e.unisonMode == UnisonChord)
+            if (e.on && e.type != EngineOrgan && e.unisonOn && e.unisonMode == UnisonChord)
             {
                 int iv[kMaxUnison];
                 const int count = unison::chordIntervals (e, iv);
@@ -520,6 +549,7 @@ void SynthCore::render (float* outL, float* outR, int n) noexcept
                 for (int pos = 0; pos < n; pos += kBlock)
                     tickGlobalSources (std::min (kBlock, n - pos), transport.ppq + transport.bpm / 60.0 / (double) sampleRate * pos);
             transport.ppq += transport.bpm / 60.0 / (double) sampleRate * n;
+            organClock += (double) n / (double) sampleRate;
             uiVoices.store (0, std::memory_order_relaxed);
             renderEpoch.fetch_add (1, std::memory_order_acq_rel); // the rack isn't touched: retired effects can go
             ++idleBlocks;
@@ -591,6 +621,7 @@ void SynthCore::renderChunk (float* outL, float* outR, int n) noexcept
     {
         const int len = std::min (kBlock, n - pos);
         tickGlobalSources (len, transport.ppq + ppqPerSample * pos);
+        tickOrgan (len);
         VoiceOut vo;
         for (int b = 0; b < NumVoiceBuses; ++b)
         {

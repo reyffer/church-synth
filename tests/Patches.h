@@ -39,6 +39,27 @@ inline SynthParams pad()
     return p;
 }
 
+// Tonewheel organ: 888000000 with percussion, click and leakage (SPEC §3.5 CPU target:
+// at most the cost of pad()).
+inline SynthParams organ (bool allOut = false)
+{
+    SynthParams p;
+    auto& eng = p.engine[0];
+    eng.type = EngineOrgan;
+    eng.volume = 0.8f;
+    for (int d = 0; d < kNumDrawbars; ++d)
+        eng.org.drawbar[(size_t) d] = allOut ? 8.0f : (d < 3 ? 8.0f : 0.0f);
+    eng.org.perc = ! allOut;
+    eng.org.leakage = allOut ? 1.0f : 0.2f;
+    eng.org.character = allOut ? 1.0f : 0.35f;
+    p.filter[0].on = false;
+    p.ampEnv.attack = 0.0f;
+    p.ampEnv.release = 0.005f;
+    p.ampVelocity = 0.0f;
+    p.maxVoices = allOut ? 16 : 8;
+    return p;
+}
+
 // Supersaw lead-ish layer.
 inline SynthParams supersaw()
 {

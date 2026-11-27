@@ -60,6 +60,9 @@ juce::StringArray fxChoices (int type, int k)
         case FxRotary:
             if (k == 0) return { "Slow", "Fast" };
             break;
+        case FxOrganScanner:
+            if (k == 0) return { "V1", "V2", "V3", "C1", "C2", "C3" };
+            break;
         default: break;
     }
     return {};

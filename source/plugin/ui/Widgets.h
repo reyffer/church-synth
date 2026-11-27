@@ -62,6 +62,10 @@ public:
     void setLabel (const juce::String& l) { label = l; repaint(); }
     void setValueColour (juce::Colour c) { slider.setColour (juce::Slider::rotarySliderFillColourId, c); }
     void setFormatter (std::function<juce::String (float)> f) { formatter = std::move (f); }
+    // Organ drawbar look: a vertical bar pulled down to raise the level (0..8, snaps to
+    // whole steps; Shift = fine). The label (footage) is drawn above it.
+    void setDrawbar (juce::Colour headColour);
+    bool isDrawbar() const noexcept { return drawbar; }
     const juce::String& getParamId() const noexcept { return paramId; }
     int getDest() const noexcept { return dest; } // modulation destination, or -1
     juce::Rectangle<float> getDialBounds() const { return dialBounds(); }
@@ -72,6 +76,10 @@ public:
     void paintOverChildren (juce::Graphics&) override;
     void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
     void mouseExit (const juce::MouseEvent&) override { hover = false; repaint(); }
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
 
     bool isInterestedInDragSource (const SourceDetails&) override;
     void itemDragEnter (const SourceDetails&) override { dropHover = true; repaint(); }
@@ -93,6 +101,11 @@ private:
     std::function<juce::String (float)> formatter;
     bool hover = false, dropHover = false, editingMod = false;
     float modDragAmount = 0.0f;
+    bool drawbar = false, barDragging = false;
+    juce::Colour barHead;
+    float barStart = 0.0f;
+    std::unique_ptr<juce::ParameterAttachment> barAtt;
+    juce::Rectangle<float> barTrack() const; // drawbar mode: the slot the bar slides in
 
     juce::Rectangle<float> dialBounds() const;
     void changeListenerCallback (juce::ChangeBroadcaster*) override;

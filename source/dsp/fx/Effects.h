@@ -22,6 +22,7 @@ enum FxType : int
     FxDistortion, FxBitcrusher, FxErode,
     FxSuperUnison, FxChorus, FxVintageChorus, FxFlanger, FxVintageFlanger, FxPhaser, FxPanner,
     FxRotary, // appended in feedback round 2
+    FxOrganScanner, // appended in v0.5 (Organ engine)
     FxTypeCount
 };
 

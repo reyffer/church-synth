@@ -41,6 +41,22 @@ static void snapshotEditor (ChurchSynthProcessor& p, const juce::File& dir)
     ed->showView (0, 4, 0); shot ("synth_random");
     ed->showView (0, 5, 0); shot ("synth_comb");
     ed->showView (0, 0, 0); shot ("synth_keyboard");
+    // Organ engine panel (Engine 2 switched to Organ for the shot, then back).
+    {
+        auto setReal = [&p] (const char* id, float v) {
+            if (auto* prm = p.apvts.getParameter (id))
+                prm->setValueNotifyingHost (prm->convertTo0to1 (v));
+        };
+        const float oldType = p.apvts.getRawParameterValue ("e2_type")->load();
+        setReal ("e2_type", (float) cs::EngineOrgan);
+        setReal ("e2_org_perc", 1.0f);
+        setReal ("e2_org_db4", 6.0f);
+        ed->showView (0, 1, 1);
+        shot ("synth_organ");
+        setReal ("e2_type", oldType);
+        setReal ("e2_org_perc", 0.0f);
+        setReal ("e2_org_db4", 0.0f);
+    }
     ed->showView (1, 1); shot ("fx");
     // Param EQ graph and the distortion menus.
     for (auto [id, t] : { std::pair<const char*, int> { "fx_b1_type", cs::fx::FxParamEq }, { "fx_b2_type", cs::fx::FxDistortion }, { "fx_b3_type", cs::fx::FxPhaser } })
@@ -1046,6 +1062,41 @@ int main (int argc, char** argv)
             p.restoreStateTree (old, ChurchSynthProcessor::LoadKind::Preset);
             check ("old state gets the reverb's modulation defaults", cs::fx::fxInfo (cs::fx::FxReverb).defaults[8], 0.0f);
         }
+        // Engine types: the type menu grew (Organ appended), so saved presets must keep
+        // their type, and presets from before it (no organ controls) get organ defaults.
+        {
+            auto fail = [&] (const char* what) { std::printf ("FAIL: %s\n", what); ++failures; };
+            for (int type : { cs::EngineAnalog, cs::EngineWavetable, cs::EngineOrgan })
+            {
+                PresetBuilder b;
+                b.set ("e1_type", (float) type).set ("e2_on", 1.0f).set ("e2_type", (float) (2 - type));
+                auto t = b.build ("zz type", "Keys");
+                // Round trip through XML, as a .csp file or a MainStage concert would.
+                auto xml = t.createXml();
+                auto back = juce::ValueTree::fromXml (*xml);
+                if (type != cs::EngineOrgan) // a v0.4 preset has no organ controls at all
+                    for (int i = back.getNumChildren(); --i >= 0;)
+                        if (back.getChild (i)["id"].toString().contains ("_org_"))
+                            back.removeChild (i, nullptr);
+                p.restoreStateTree (back, ChurchSynthProcessor::LoadKind::Preset);
+                if (std::lround (p.apvts.getRawParameterValue ("e1_type")->load()) != type
+                    || std::lround (p.apvts.getRawParameterValue ("e2_type")->load()) != 2 - type)
+                    fail ("engine type survives save / load");
+                if (type != cs::EngineOrgan && std::abs (p.apvts.getRawParameterValue ("e1_org_db1")->load() - 8.0f) > 1e-4f)
+                    fail ("old preset gets the organ defaults");
+            }
+            // Every factory preset keeps its engine types after a save / load.
+            for (const auto& fp : factoryPresets())
+            {
+                PresetBuilder b;
+                fp.build (b);
+                const auto t = b.build (fp.name, fp.category);
+                p.restoreStateTree (juce::ValueTree::fromXml (*t.createXml()), ChurchSynthProcessor::LoadKind::Preset);
+                for (const char* id : { "e1_type", "e2_type" })
+                    if (std::abs (p.apvts.getRawParameterValue (id)->load() - (float) t.getChildWithProperty ("id", id)["value"]) > 1e-4f)
+                        fail ("factory preset engine type changed on load");
+            }
+        }
         // Favourite folders (playlists) and User subfolders.
         {
             const auto favFile = PresetManager::rootFolder().getChildFile ("Favourite Folders.xml");
@@ -1145,15 +1196,22 @@ int main (int argc, char** argv)
         const juce::File dir (argv[2]);
         dir.createDirectory();
         int index = 0;
+        const juce::String only = argc > 3 ? juce::String (argv[3]) : juce::String(); // optional name filter
         for (const auto& info : p.presets().all())
         {
             if (! info.factory)
                 continue;
+            if (only.isNotEmpty() && ! info.name.containsIgnoreCase (only))
+            {
+                ++index;
+                continue;
+            }
             p.presets().load (info);
             p.syncEffects();
             p.prepareToPlay (48000.0, 512);
             const bool melodic = info.category == "Lead" || info.category == "Bass";
-            const double seconds = 6.5;
+            const bool organPhrase = info.name.startsWith ("Tonewheel") || info.name.contains ("Tonewheel");
+            const double seconds = organPhrase ? 10.0 : 6.5;
             juce::AudioBuffer<float> out (2, (int) (48000.0 * seconds));
             juce::AudioBuffer<float> buf (2, 512);
             for (int pos = 0; pos + 512 <= out.getNumSamples(); pos += 512)
@@ -1161,7 +1219,29 @@ int main (int argc, char** argv)
                 juce::MidiBuffer midi;
                 const double t = pos / 48000.0;
                 auto at = [&] (double when) { return t <= when && when < t + 512 / 48000.0; };
-                if (melodic)
+                if (organPhrase)
+                {
+                    // Left-hand chord, a detached right-hand line (percussion on every note),
+                    // then a legato line (no retrigger), the mod wheel to fast rotary and back.
+                    const int base = info.category == "Bass" ? -24 : 0;
+                    for (int n : { 48, 52, 55 })
+                    {
+                        if (at (0.05)) midi.addEvent (juce::MidiMessage::noteOn (1, n + base, (juce::uint8) 100), 0);
+                        if (at (8.5)) midi.addEvent (juce::MidiMessage::noteOff (1, n + base), 0);
+                    }
+                    const int line[8] = { 72, 74, 76, 79, 76, 74, 72, 67 };
+                    for (int k = 0; k < 8; ++k)
+                    {
+                        // Detached (0.25 s on, 0.1 s off) for the first four, legato for the rest.
+                        const double on = 0.6 + k * 0.35, off = on + (k < 4 ? 0.25 : 0.38);
+                        if (base != 0) continue;
+                        if (at (on)) midi.addEvent (juce::MidiMessage::noteOn (1, line[k], (juce::uint8) 100), 0);
+                        if (at (off)) midi.addEvent (juce::MidiMessage::noteOff (1, line[k]), 0);
+                    }
+                    if (at (4.5)) midi.addEvent (juce::MidiMessage::controllerEvent (1, 1, 127), 0);
+                    if (at (7.0)) midi.addEvent (juce::MidiMessage::controllerEvent (1, 1, 0), 0);
+                }
+                else if (melodic)
                 {
                     const int notes[4] = { 60, 64, 67, 72 };
                     for (int k = 0; k < 4; ++k)

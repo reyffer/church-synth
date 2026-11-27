@@ -62,7 +62,9 @@ inline float segmentShape (float u, float c) noexcept
 // Values shared by all voices for one control block.
 struct GlobalMod
 {
-    float modWheel = 0.0f, aftertouch = 0.0f, expression = 0.0f;
+    float modWheel = 0.0f, aftertouch = 0.0f, expression = 1.0f;
+    double organClock = 0.0;          // seconds, instance-wide: tonewheel phases (Organ engine)
+    float organPerc[kNumEngines][2] {}; // per engine slot: shared percussion level at block start / end
     float lfo[kNumLfos] {}, func[kNumFuncs] {}, rnd[kNumRandoms] {};
     bool lfoWrap[kNumLfos] {};
     bool lfoIsGlobal[kNumLfos] {}, funcIsGlobal[kNumFuncs] {}, randIsGlobal[kNumRandoms] {};

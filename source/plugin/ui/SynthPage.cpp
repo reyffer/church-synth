@@ -317,6 +317,116 @@ private:
     }
 };
 
+// Organ (tonewheel) engine: drawbars in the middle, wheels / click / percussion on the right.
+class OrganView final : public ControlPanel
+{
+public:
+    OrganView (UiContext& c, int engine) : ControlPanel (c), e (engine)
+    {
+        const juce::String x = "e" + juce::String (e + 1) + "_", o = x + "org_";
+        const int meterBase = e == 0 ? cs::MeterE1Osc1 : cs::MeterE2Osc1;
+
+        // Tune + output (no unison: one tone per key, like the real organ).
+        title ({ 12, 6, 80, 16 }, "Tune");
+        knob (x + "coarse", "Coarse", { 10, 24, 64, 70 }).setFormatter ([] (float v) { return juce::String ((int) std::lround (v)) + " st"; });
+        toggle (x + "kbd", Toggle::TextPill, "kbd", { 82, 30, 40, 16 }).setTooltip ("Key tracking (off = fixed pitch)");
+        knob (x + "fine", "Fine", { 6, 98, 54, 60 });
+        title ({ 12, 170, 80, 16 }, "Output");
+        knob (x + "vol", "Volume", { 6, 190, 56, 66 });
+        knob (x + "fmix", "F1 / F2", { 66, 190, 56, 66 }).setTooltip ("Filter mix: how much goes to Filter 1 vs Filter 2");
+        caption ({ 6, 262, 120, 14 }, "Swell: Expression (CC11)");
+        caption ({ 6, 276, 120, 14 }, "via Amp Mod in the presets");
+
+        // Drawbars: brown = sub-harmonics, white = octaves, black = the other harmonics.
+        add<SoundLed> ({ 144, 9, 14, 14 }, ctx, meterBase + 0, "the tonewheels (drawbars)");
+        title ({ 160, 8, 120, 16 }, "Drawbars");
+        auto& reg = add<FlatButton> ({ 400, 5, 120, 20 }, "Registrations...");
+        reg.setTooltip ("Classic drawbar settings to start from");
+        reg.onClick = [this, &reg] { showRegistrations (reg); };
+        static const char* const kFeet[cs::kNumDrawbars] = { "16'", "5 1/3'", "8'", "4'", "2 2/3'", "2'", "1 3/5'", "1 1/3'", "1'" };
+        const juce::Colour brown (0xff8a4b2a), white (0xffe6e1d6), black (0xff26262a);
+        const juce::Colour heads[cs::kNumDrawbars] = { brown, brown, white, white, black, white, black, black, white };
+        for (int d = 0; d < cs::kNumDrawbars; ++d)
+            knob (o + "db" + juce::String (d + 1), kFeet[d], { 146 + d * 41, 30, 40, 258 }).setDrawbar (heads[d]);
+        caption ({ 146, 290, 380, 14 }, "Drag a bar down to pull it out (8 = full, 0 = off). Shift = fine");
+
+        const int rx = 534;
+        title ({ rx + 6, 6, 100, 16 }, "Tonewheels");
+        knob (o + "char", "Character", { rx + 2, 26, 56, 66 }).setTooltip ("Clean sine wheels (0) to old, slightly gritty wheels (1)");
+        knob (o + "leak", "Leakage", { rx + 60, 26, 56, 66 });
+        pill (o + "tuning", { rx + 122, 30, 116, 18 }).setTooltip ("Tonewheel gear-ratio tuning or equal temperament");
+        toggle (o + "bass", Toggle::TextPill, "bass all the way down", { rx + 122, 56, 116, 18 })
+            .setTooltip ("Off: the 16' folds up an octave in the lowest octave");
+
+        add<SoundLed> ({ rx + 4, 105, 14, 14 }, ctx, meterBase + 3, "the key click");
+        title ({ rx + 20, 104, 100, 16 }, "Key Click");
+        knob (o + "click", "Click", { rx + 2, 124, 56, 66 });
+        knob (o + "click_tone", "Tone", { rx + 60, 124, 56, 66 });
+        caption ({ rx + 122, 132, 118, 14 }, "Each drawbar contact");
+        caption ({ rx + 122, 146, 118, 14 }, "closes at its own time.");
+
+        toggle (o + "perc", Toggle::Power, {}, { rx + 6, 207, 16, 16 }).setTooltip ("Percussion on/off");
+        add<SoundLed> ({ rx + 26, 208, 14, 14 }, ctx, meterBase + 1, "the percussion");
+        title ({ rx + 42, 207, 100, 16 }, "Percussion");
+        percControls.push_back (&pill (o + "perc_harm", { rx + 6, 232, 74, 18 }));
+        percControls.push_back (&pill (o + "perc_decay", { rx + 84, 232, 74, 18 }));
+        percControls.push_back (&pill (o + "perc_vol", { rx + 162, 232, 74, 18 }));
+        percControls.push_back (&toggle (o + "perc_cut", Toggle::TextPill, "mutes the 1'", { rx + 6, 258, 100, 18 }));
+        caption ({ rx + 6, 284, 236, 14 }, "Plays only from all keys up: legato won't retrigger it");
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        g.setColour (col::border);
+        g.drawVerticalLine (132, 6.0f, (float) getHeight() - 6.0f);
+        g.drawHorizontalLine (162, 6.0f, 126.0f);
+        g.drawVerticalLine (528, 6.0f, (float) getHeight() - 6.0f);
+        g.drawHorizontalLine (98, 534.0f, (float) getWidth() - 8.0f);
+        g.drawHorizontalLine (200, 534.0f, (float) getWidth() - 8.0f);
+        paintCaptions (g);
+    }
+
+    void refreshView() override
+    {
+        ControlPanel::refreshView();
+        const bool perc = ctx.intValue ("e" + juce::String (e + 1) + "_org_perc") != 0;
+        for (auto* c : percControls)
+            c->setAlpha (perc ? 1.0f : 0.45f);
+    }
+
+private:
+    int e;
+    std::vector<juce::Component*> percControls;
+
+    void showRegistrations (juce::Component& target)
+    {
+        // Common starting registrations (16' 5 1/3' 8' 4' 2 2/3' 2' 1 3/5' 1 1/3' 1').
+        struct Reg { const char* name; const char* bars; };
+        static const Reg kRegs[] = {
+            { "Jazz Trio (888 000 000)", "888000000" },
+            { "Full Gospel (888 800 008)", "888800008" },
+            { "Soft Ballad (008 500 000)", "008500000" },
+            { "Warm Worship (838 000 000)", "838000000" },
+            { "Flutes (006 040 000)", "006040000" },
+            { "Bright Lead (800 000 888)", "800000888" },
+            { "Sweet Choir (006 876 540)", "006876540" },
+            { "Rock Grind (888 600 000)", "888600000" },
+            { "All Out (888 888 888)", "888888888" },
+        };
+        juce::PopupMenu m;
+        for (int i = 0; i < (int) std::size (kRegs); ++i)
+            m.addItem (i + 1, kRegs[i].name);
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&target),
+                         [this, safe = juce::Component::SafePointer<OrganView> (this)] (int r) {
+                             if (safe == nullptr || r <= 0)
+                                 return;
+                             const char* bars = kRegs[r - 1].bars;
+                             for (int d = 0; d < cs::kNumDrawbars; ++d)
+                                 ctx.setValue ("e" + juce::String (e + 1) + "_org_db" + juce::String (d + 1), (float) (bars[d] - '0'));
+                         });
+    }
+};
+
 class UtilityView final : public ControlPanel
 {
 public:
@@ -416,8 +526,10 @@ public:
         {
             analog[e] = std::make_unique<AnalogView> (ctx, e);
             wavetable[e] = std::make_unique<WavetableView> (ctx, e);
+            organ[e] = std::make_unique<OrganView> (ctx, e);
             addChildComponent (*analog[e]);
             addChildComponent (*wavetable[e]);
+            addChildComponent (*organ[e]);
             power[e] = std::make_unique<Toggle> (ctx, "e" + juce::String (e + 1) + "_on", Toggle::Power);
             type[e] = std::make_unique<Pill> (ctx, "e" + juce::String (e + 1) + "_type");
             type[e]->textColour = col::text;
@@ -473,6 +585,7 @@ public:
         {
             analog[e]->setBounds (content);
             wavetable[e]->setBounds (content);
+            organ[e]->setBounds (content);
         }
         utility->setBounds (content);
     }
@@ -503,11 +616,13 @@ public:
     {
         for (int e = 0; e < 2; ++e)
         {
-            const bool wt = ctx.intValue ("e" + juce::String (e + 1) + "_type") == cs::EngineWavetable;
-            analog[e]->setVisible (current == e && ! wt);
-            wavetable[e]->setVisible (current == e && wt);
+            const int engineType = ctx.intValue ("e" + juce::String (e + 1) + "_type");
+            ControlPanel* views[3] = { analog[e].get(), wavetable[e].get(), organ[e].get() };
+            const int shown = juce::jlimit (0, 2, engineType);
+            for (int k = 0; k < 3; ++k)
+                views[k]->setVisible (current == e && k == shown);
             if (current == e)
-                (wt ? (ControlPanel*) wavetable[e].get() : (ControlPanel*) analog[e].get())->refreshView();
+                views[shown]->refreshView();
         }
         utility->setVisible (current == 2);
         if (current == 2)
@@ -519,6 +634,7 @@ private:
     int current = 0;
     std::unique_ptr<AnalogView> analog[2];
     std::unique_ptr<WavetableView> wavetable[2];
+    std::unique_ptr<OrganView> organ[2];
     std::unique_ptr<UtilityView> utility;
     std::unique_ptr<Toggle> power[3];
     std::unique_ptr<Pill> type[2];

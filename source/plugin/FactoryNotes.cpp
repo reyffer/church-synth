@@ -82,6 +82,75 @@ Instant attack, decay to 40 % sustain.
 Why it cuts through: the narrow square adds bright upper harmonics, and the filter envelope makes every note start bright.
 
 Try: Macro 3 turns the click up or down.)" },
+        { "Tonewheel Init", R"(Recipe: the Organ engine, a model of a tonewheel organ. Each drawbar adds one harmonic of the key you play, made by its own spinning tonewheel: 16' (an octave down), 5 1/3' (a fifth above that), 8' (the note itself), then 4', 2 2/3', 2', 1 3/5', 1 1/3' and 1' going up. Here: 888 000 000, the first three bars full.
+
+The signal then goes through the Organ Scanner (FX A1, mode C3: the organ's own chorus) and the rotary speaker (FX A2). The mod wheel switches the rotary to Fast once it passes half way; let go and it slows down again, the bass drum more slowly than the horn, as on a real cabinet.
+
+Playing: no velocity (an organ key is on or off). The Expression pedal (CC11) is the swell, through Amp Mod. Without a pedal the organ plays at full level. Each key click comes from the drawbar contacts closing a fraction of a millisecond apart.
+
+Try: Registrations... above the drawbars for classic settings. Pull out the 4' and 2' for more edge. For a split or pedal bass, use a second instance (see Tonewheel Bass).)" },
+        { "Tonewheel Gospel", R"(Recipe: 888 800 008 on the Organ engine: the three lower bars and 4' full, plus the 1' for the sizzle on top. A bit more leakage and Wheel Character than the Init preset for the slightly dirty sound of an old instrument, and a harder rotary Drive (FX A2).
+
+Why it works in gospel: the 16' gives weight under the band, the 1' cuts through cymbals, and the driven rotary turns chords into a roar when you hit the fast speed.
+
+Listen for: the swirl changing when you push the mod wheel past half way (fast) and back (slow); the speed ramps instead of jumping.
+
+Try: Macro 1 pulls out the middle bars (2 2/3', 2', 1 3/5') for the full "all out" shout. Macro 3 adds drive. Use the Expression pedal for dynamics, not velocity.)" },
+        { "Tonewheel Jazz", R"(Recipe: 888 000 000 with percussion: Third harmonic, Fast decay, Normal level. The percussion adds a short "ping" an octave and a fifth above each note (the 2 2/3' pitch) that dies away quickly.
+
+How the percussion behaves, as on the original: it only plays when you start from all keys up. Notes played legato, while another key is still down, get no new ping. Jazz players use this: detached notes ping, legato runs stay smooth. With percussion on, the 1' drawbar is silent and the drawbars drop a little in level (Normal).
+
+Listen for: the difference between a staccato line (every note pings) and a legato line (only the first note does).
+
+Try: Second harmonic for a softer, rounder ping. Slow decay for a bell-like tail. Macro 4 sets the key click.)" },
+        { "Tonewheel Ballad", R"(Recipe: 008 500 000: just the 8' (the note itself) and a softer 4' an octave up. With no 16' it stays out of the bass player's way; with no high bars it is round and soft. Chorus C2 (FX A1) and the slow rotary give movement; a little hall.
+
+Key click is low (0.2), so notes start smoothly, and leakage is low for a clean tone.
+
+Why it works for quiet moments: a pure, soft organ is one of the most supportive sounds under a voice, and it never gets in the way of the words.
+
+Try: Macro 1 adds the 16' and 2' for a fuller chorus. Swell with the Expression pedal rather than playing harder.)" },
+        { "Worship Tonewheel", R"(Recipe: 838 000 000: full 16' and 8' with the 5 1/3' only at 3, so the bass is warm without the hollow "quint" sound getting heavy. Chorus C3, slow rotary with very little drive, a little hall.
+
+This is the organ for sitting under a worship band: wide, warm and steady. Hold chords with your left hand and leave the melody to the singers.
+
+Listen for: how the slow rotary makes held chords move without any obvious wobble.
+
+Try: Macro 1 adds the 4' and 2' as the song builds. The mod wheel (fast rotary) for the last chorus.)" },
+        { "Tonewheel Flutes", R"(Recipe: 006 040 000: the 8' at 6 and the 2 2/3' at 4 only. That is the classic "flute" colour: hollow and a little reedy because the 2 2/3' is a twelfth (not an octave). Wheel Character is low, so the wheels are almost pure sines.
+
+The Organ Scanner is on V3: vibrato only (no dry signal), the deepest setting, so the pitch wobbles like a theatre organ flute. Compare with the C modes, which mix in the dry signal and sound like a chorus instead.
+
+Try: switch the scanner (FX A1) between V1, V2 and V3 to hear the depth change. Macro 1 adds the 4'.)" },
+        { "Tonewheel Lead", R"(Recipe: 800 000 888: the 16' plus the three highest bars. With nothing in the middle the sound is thin and piercing, made for single-note lines. Percussion: Second harmonic, Fast, and here it does not mute the 1' (Mutes the 1' is off).
+
+Drive is high on the rotary (FX A2), so the sound bites when you play harder chords; the mod wheel switches the rotary to fast for long held notes.
+
+Try: play a line legato and then detached to hear the percussion only on detached notes. Macro 1 adds the 8' for body.)" },
+        { "Tonewheel Choir", R"(Recipe: 006 876 540: the bars rise and then fall away towards the top, so the harmonics are balanced like a soft string section or a choir "ooh". No 16', so it floats above the band.
+
+Chorus C2 (FX A1) and the slow rotary, a little hall. Key click is low for smooth entries.
+
+Listen for: how many drawbars blend into one smooth tone when their levels form a curve like this.
+
+Try: Macro 1 adds the 16' for a fuller ending. Move single drawbars one step at a time and listen to how each harmonic changes the colour.)" },
+        { "Tonewheel All Out", R"(Recipe: 888 888 888: every drawbar fully out. More leakage (the faint sound of neighbouring wheels), more Wheel Character (grittier wheels) and a key click that cuts through. The rotary Drive (FX A2) is pushed hard.
+
+This is the loudest organ registration; on a real instrument it is used for climaxes and rock. Watch your level.
+
+Try: Macro 2 for even more drive, Macro 3 for more leakage dirt. Pull single bars back in to see how much each harmonic carries.)" },
+        { "Tonewheel Rock", R"(Recipe: 888 600 000 with high Wheel Character and leakage, a strong key click and a lot of rotary drive (FX A2): the crunchy rock organ. The 4' at 6 gives edge without the fizz of the top bars.
+
+Rock players switch the rotary to fast for solos and big chords: the mod wheel does it here. The drive comes before the rotary, as with a real cabinet's preamp.
+
+Try: Macro 1 adds the 2' and 1' for a screaming top. Macro 3 for more drive.)" },
+        { "Tonewheel Bass", R"(Recipe: 808 000 000: the 16' and 8' only, for left-hand bass lines. A strong, dark key click (click tone low) gives the "thump" of organ bass. Four voices.
+
+The rotary (FX A1) is set mostly to the bass drum (Horn/Drum at 0.3), which turns slowly and adds only gentle movement. Mod wheel = fast.
+
+How to use it: one Church Synth instance per manual. In MainStage, put this preset on a second channel strip and limit its key range to the lower part of the keyboard (or a pedalboard); play the upper manual with another tonewheel preset.
+
+Try: Macro 1 adds the 5 1/3' for a growlier bass. Macro 4 takes the rotary out for a tighter low end.)" },
         { "Gospel Organ", R"(Recipe: the "Drawbars" wavetable plus a sine an octave down for the bass drawbar. The mod wheel moves the wavetable to a fuller registration (more drawbars). Fast attack, short release, Vintage Chorus I + II.
 
 Try: ride the mod wheel into the chorus of a song. For a rotary speaker (the real gospel sound), use the Tonewheel organs in the pack.)" },

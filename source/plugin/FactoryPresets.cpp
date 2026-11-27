@@ -231,6 +231,121 @@ const std::vector<FactoryPreset>& factoryPresets()
               macros (b, "Drawbars", "Space", "Chorus", "Release");
               b.route ("Macro 1", "e1_wt_pos", 0.4f).route ("Macro 2", "fx_aux_send", 0.5f).route ("Macro 3", "fx_a1_p5", 0.5f).route ("Macro 4", "env1_r", 0.4f);
           } },
+        // Organ engine (v0.5): tonewheel model. All: Expression (CC11) = swell, mod wheel = rotary fast.
+        { "Tonewheel Init", "Keys", "Starting point for the tonewheel organ: 888 drawbars, chorus C3 into the rotary speaker. Mod wheel = fast rotary, expression pedal = swell.",
+          [] (B& b) {
+              b.set ("master_vol", 0.46f); // level-matched across the factory set
+              tonewheel (b, 0, "888000000");
+              organFx (b, 5);
+              room (b, 0.12f);
+              macros (b, "Drawbars", "Space", "Drive", "Click");
+              b.route ("Macro 1", "e1_org_db4", 0.75f).route ("Macro 1", "e1_org_db6", 0.6f).route ("Macro 1", "e1_org_db9", 0.5f);
+              b.route ("Macro 2", "fx_aux_send", 0.5f).route ("Macro 3", "fx_a2_p6", 0.6f).route ("Macro 4", "e1_org_click", 0.5f);
+          } },
+        { "Tonewheel Gospel", "Keys", "Full gospel registration with a driven rotary. Mod wheel kicks the rotary to fast for the shout chorus.",
+          [] (B& b) {
+              b.set ("master_vol", 0.36f); // level-matched across the factory set
+              tonewheel (b, 0, "888800008");
+              b.set ("e1_org_leak", 0.3f).set ("e1_org_click", 0.6f).set ("e1_org_char", 0.45f);
+              organFx (b, 5, 0.45f);
+              room (b, 0.12f);
+              macros (b, "Drawbars", "Space", "Drive", "Click");
+              b.route ("Macro 1", "e1_org_db5", 0.75f).route ("Macro 1", "e1_org_db6", 0.75f).route ("Macro 1", "e1_org_db7", 0.6f);
+              b.route ("Macro 2", "fx_aux_send", 0.5f).route ("Macro 3", "fx_a2_p6", 0.5f).route ("Macro 4", "e1_org_click", 0.4f);
+          } },
+        { "Tonewheel Jazz", "Keys", "The classic jazz trio sound: 888 with third-harmonic fast percussion. Play detached to hear the percussion on every note.",
+          [] (B& b) {
+              b.set ("master_vol", 0.63f); // level-matched across the factory set
+              tonewheel (b, 0, "888000000");
+              percussion (b, 0, true, false);
+              b.set ("e1_org_click", 0.65f);
+              organFx (b, 5, 0.25f);
+              room (b, 0.1f);
+              macros (b, "Drawbars", "Space", "Drive", "Click");
+              b.route ("Macro 1", "e1_org_db4", 0.75f).route ("Macro 2", "fx_aux_send", 0.5f).route ("Macro 3", "fx_a2_p6", 0.6f).route ("Macro 4", "e1_org_click", 0.4f);
+          } },
+        { "Tonewheel Ballad", "Keys", "Soft 8' and 4' with gentle chorus and a slow rotary. For quiet verses and prayer.",
+          [] (B& b) {
+              b.set ("master_vol", 0.69f); // level-matched across the factory set
+              tonewheel (b, 0, "008500000", 1.0f);
+              b.set ("e1_org_click", 0.2f).set ("e1_org_leak", 0.15f);
+              organFx (b, 4, 0.1f);
+              hall (b, 0.25f, 0.6f, 0.5f);
+              macros (b, "Drawbars", "Space", "Drive", "Click");
+              b.route ("Macro 1", "e1_org_db1", 0.6f).route ("Macro 1", "e1_org_db6", 0.5f).route ("Macro 2", "fx_aux_send", 0.5f).route ("Macro 3", "fx_a2_p6", 0.5f).route ("Macro 4", "e1_org_click", 0.5f);
+          } },
+        { "Worship Tonewheel", "Keys", "Warm, full but soft registration under a worship band: chorus C3, slow rotary, a little hall.",
+          [] (B& b) {
+              b.set ("master_vol", 0.54f); // level-matched across the factory set
+              tonewheel (b, 0, "838000000");
+              b.set ("e1_org_click", 0.3f);
+              organFx (b, 5, 0.15f);
+              hall (b, 0.2f, 0.55f, 0.45f);
+              macros (b, "Drawbars", "Space", "Drive", "Click");
+              b.route ("Macro 1", "e1_org_db4", 0.6f).route ("Macro 1", "e1_org_db6", 0.5f).route ("Macro 2", "fx_aux_send", 0.5f).route ("Macro 3", "fx_a2_p6", 0.5f).route ("Macro 4", "e1_org_click", 0.5f);
+          } },
+        { "Tonewheel Flutes", "Keys", "Flute registration (8' and 2 2/3') with deep vibrato V3 and no chorus: pure and hollow.",
+          [] (B& b) {
+              b.set ("master_vol", 0.94f); // level-matched across the factory set
+              tonewheel (b, 0, "006040000", 1.0f);
+              b.set ("e1_org_click", 0.25f).set ("e1_org_char", 0.2f);
+              organFx (b, 2, 0.05f);
+              hall (b, 0.2f, 0.5f, 0.45f);
+              macros (b, "Drawbars", "Space", "Drive", "Click");
+              b.route ("Macro 1", "e1_org_db4", 0.5f).route ("Macro 2", "fx_aux_send", 0.5f).route ("Macro 3", "fx_a2_p6", 0.5f).route ("Macro 4", "e1_org_click", 0.5f);
+          } },
+        { "Tonewheel Lead", "Keys", "Bright lead registration (16' plus the top three) with second-harmonic percussion and drive. Fast rotary on the wheel.",
+          [] (B& b) {
+              b.set ("master_vol", 0.47f); // level-matched across the factory set
+              tonewheel (b, 0, "800000888");
+              percussion (b, 0, false, false);
+              b.set ("e1_org_perc_cut", 0.0f).set ("e1_org_click", 0.7f);
+              organFx (b, 5, 0.55f);
+              room (b, 0.1f);
+              macros (b, "Drawbars", "Space", "Drive", "Click");
+              b.route ("Macro 1", "e1_org_db3", 0.75f).route ("Macro 2", "fx_aux_send", 0.5f).route ("Macro 3", "fx_a2_p6", 0.45f).route ("Macro 4", "e1_org_click", 0.3f);
+          } },
+        { "Tonewheel Choir", "Keys", "Sweet, string-like registration that fades upwards (006 876 540) with chorus C2.",
+          [] (B& b) {
+              b.set ("master_vol", 0.35f); // level-matched across the factory set
+              tonewheel (b, 0, "006876540");
+              b.set ("e1_org_click", 0.25f);
+              organFx (b, 4, 0.1f);
+              hall (b, 0.25f, 0.6f, 0.5f);
+              macros (b, "Drawbars", "Space", "Drive", "Click");
+              b.route ("Macro 1", "e1_org_db1", 0.6f).route ("Macro 2", "fx_aux_send", 0.5f).route ("Macro 3", "fx_a2_p6", 0.5f).route ("Macro 4", "e1_org_click", 0.5f);
+          } },
+        { "Tonewheel All Out", "Keys", "Every drawbar out, extra leakage and a hard-driven rotary: the loudest, dirtiest organ.",
+          [] (B& b) {
+              b.set ("master_vol", 0.28f); // level-matched across the factory set
+              tonewheel (b, 0, "888888888");
+              b.set ("e1_org_leak", 0.45f).set ("e1_org_char", 0.6f).set ("e1_org_click", 0.7f);
+              organFx (b, 5, 0.7f);
+              room (b, 0.1f);
+              macros (b, "Space", "Drive", "Leakage", "Click");
+              b.route ("Macro 1", "fx_aux_send", 0.5f).route ("Macro 2", "fx_a2_p6", 0.3f).route ("Macro 3", "e1_org_leak", 0.5f).route ("Macro 4", "e1_org_click", 0.3f);
+          } },
+        { "Tonewheel Rock", "Keys", "Gritty 888 600 with a crunchy rotary drive. Hit the mod wheel for the fast-rotary scream.",
+          [] (B& b) {
+              b.set ("master_vol", 0.32f); // level-matched across the factory set
+              tonewheel (b, 0, "888600000");
+              b.set ("e1_org_leak", 0.35f).set ("e1_org_char", 0.55f).set ("e1_org_click", 0.75f);
+              organFx (b, 5, 0.8f);
+              room (b, 0.08f);
+              macros (b, "Drawbars", "Space", "Drive", "Click");
+              b.route ("Macro 1", "e1_org_db6", 0.75f).route ("Macro 1", "e1_org_db9", 0.75f).route ("Macro 2", "fx_aux_send", 0.5f).route ("Macro 3", "fx_a2_p6", 0.2f).route ("Macro 4", "e1_org_click", 0.25f);
+          } },
+        { "Tonewheel Bass", "Bass", "Left-hand organ bass: 16' and 8' with a thumpy click, mostly the rotary's slow bass drum. Use it in a second instance for the left hand.",
+          [] (B& b) {
+              b.set ("master_vol", 0.73f); // level-matched across the factory set
+              tonewheel (b, 0, "808000000");
+              b.set ("e1_org_click", 0.8f).set ("e1_org_click_tone", 0.2f);
+              b.fx (0, FxRotary, { { 4, 0.3f }, { 5, 0.25f }, { 6, 0.4f } });
+              b.route ("Mod Wheel", "fx_a1_p1", 1.0f);
+              b.set ("max_voices", 4.0f);
+              macros (b, "Growl", "Thump", "Drive", "Rotary Mix");
+              b.route ("Macro 1", "e1_org_db2", 0.6f).route ("Macro 2", "e1_org_click", 0.2f).route ("Macro 3", "fx_a1_p6", 0.5f).route ("Macro 4", "fx_a1_p8", -0.6f);
+          } },
         { "Pipe Organ", "Keys", "Church pipe organ with a flute rank and a big stone room.",
           [] (B& b) {
               b.set ("master_vol", 0.26f); // level-matched across the factory set
@@ -757,6 +872,16 @@ const std::vector<FactoryFxPreset>& factoryFxPresets()
         { FxParamEq, "Air", { { 9, 0.62f }, { 8, 0.7f } } },
         // Distortion
         { FxDistortion, "Warm Drive", { { 0, 0.15f }, { 1, 0.3f }, { 10, 0.6f } } },
+        // Organ Scanner: Mode (V1 V2 V3 C1 C2 C3), Rate, Depth, Tone, Stereo, Dry/Wet
+        { FxOrganScanner, "Chorus C3", { { 0, 5.5f / 6.0f } } },
+        { FxOrganScanner, "Chorus C1 (light)", { { 0, 3.5f / 6.0f } } },
+        { FxOrganScanner, "Vibrato V3", { { 0, 2.5f / 6.0f } } },
+        { FxOrganScanner, "Vibrato V1 (light)", { { 0, 0.5f / 6.0f } } },
+        { FxOrganScanner, "Wide Chorus", { { 0, 5.5f / 6.0f }, { 4, 0.6f } } },
+        // Rotary: Speed, Slow Rate, Fast Rate, Ramp, Horn/Drum, Drive, Spread, Dry/Wet, Brake
+        { FxRotary, "Slow", {} },
+        { FxRotary, "Fast", { { 0, 1.0f } } },
+        { FxRotary, "Driven", { { 5, 0.6f } } },
     };
     return list;
 }
@@ -780,6 +905,17 @@ juce::StringArray factoryPresetTags (const juce::String& presetName)
         { "Soft Keys", "Synth Keys, Worship" },
         { "Stage Keys", "Synth Keys" },
         { "Gospel Organ", "Organ" },
+        { "Tonewheel Init", "Organ, Tonewheel" },
+        { "Tonewheel Gospel", "Organ, Tonewheel, Gospel" },
+        { "Tonewheel Jazz", "Organ, Tonewheel, Jazz" },
+        { "Tonewheel Ballad", "Organ, Tonewheel, Worship" },
+        { "Worship Tonewheel", "Organ, Tonewheel, Worship" },
+        { "Tonewheel Flutes", "Organ, Tonewheel" },
+        { "Tonewheel Lead", "Organ, Tonewheel, Lead" },
+        { "Tonewheel Choir", "Organ, Tonewheel" },
+        { "Tonewheel All Out", "Organ, Tonewheel, Rock" },
+        { "Tonewheel Rock", "Organ, Tonewheel, Rock" },
+        { "Tonewheel Bass", "Organ, Tonewheel, Bass" },
         { "Pipe Organ", "Organ, Pipe Organ" },
         { "Glass Keys", "Bells, Synth Keys" },
         { "Worship Pluck", "Pluck, Worship" },

@@ -81,7 +81,8 @@ private:
     uint64_t stamp = 0;
     uint32_t seedCounter = 12345u;
     int rotateIndex = 0;
-    float bend = 0.0f, modWheel = 0.0f, channelPressure = 0.0f, expression = 0.0f;
+    float bend = 0.0f, modWheel = 0.0f, channelPressure = 0.0f;
+    float expression = 1.0f; // CC11 convention: no pedal = full level
     Transport transport;
     ModRouting routing;
 
@@ -99,6 +100,10 @@ private:
     int vmNoteStep[kNumRandoms][128];
     void assignVoiceModSteps (Voice& v, int note) noexcept;
     void tickGlobalSources (int n, double blockPpq) noexcept;
+    void tickOrgan (int n) noexcept;
+    double organClock = 0.0;
+    float organPerc[kNumEngines] {};
+    bool organPercTrigger = false;
     bool anyVoiceActive() const noexcept;
     void trackSilence (const float* outL, const float* outR, int n) noexcept;
     int silentSamples = 0, idleAfter = 12000;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AnalogEngine.h"
+#include "OrganEngine.h"
 #include "UtilityEngine.h"
 #include "WavetableEngine.h"
 #include "MultiFilter.h"
@@ -41,6 +42,7 @@ public:
         {
             analog[e].setSampleRate (sr);
             wavetable[e].setSampleRate (sr);
+            organ[e].setSampleRate (sr);
         }
         utility.setSampleRate (sr);
         env2.setSampleRate (sr);
@@ -115,6 +117,9 @@ public:
         glideStart (p, glideSeconds);
         if (retriggerEnv)
         {
+            for (int e = 0; e < kNumEngines; ++e)
+                if (p.engine[(size_t) e].type == EngineOrgan)
+                    organ[e].retrigger();
             env.gateOn();
             if (p.env2Retrig == EnvRetrigPolyKbd) env2.gateOn();
             if (p.env3Retrig == EnvRetrigPolyKbd) env3.gateOn();
@@ -152,6 +157,8 @@ public:
             env.gateOff();
             env2.gateOff();
             env3.gateOff();
+            for (auto& o : organ)
+                o.noteOff();
         }
     }
 
@@ -173,6 +180,7 @@ public:
     {
         if (! active)
             return;
+        gm = &g;
         // Source settings use last block's modulated values (so LFO rate etc. can be modulated).
         const SynthParams& sp = localValid ? local : p;
         computeSources (sp, g, n);
@@ -222,7 +230,7 @@ public:
     static bool hasChordEngine (const SynthParams& p) noexcept
     {
         for (const auto& e : p.engine)
-            if (e.on && e.unisonOn && e.unisonMode == UnisonChord)
+            if (e.on && e.type != EngineOrgan && e.unisonOn && e.unisonMode == UnisonChord)
                 return true;
         return false;
     }
@@ -277,6 +285,17 @@ private:
             float* em = metering ? blockMeter + (e == 0 ? MeterE1Osc1 : MeterE2Osc1) : nullptr;
             if (ep.type == EngineWavetable)
                 wavetable[e].render (ep, notePitch, fixedPitch, n, eL, eR, ext, modBuf[e], em);
+            else if (ep.type == EngineOrgan)
+            {
+                OrganContext oc;
+                if (gm != nullptr)
+                {
+                    oc.clock = gm->organClock;
+                    oc.percFrom = gm->organPerc[e][0];
+                    oc.percTo = gm->organPerc[e][1];
+                }
+                organ[e].render (ep, notePitch, fixedPitch, n, eL, eR, modBuf[e], em, oc);
+            }
             else
                 analog[e].render (ep, notePitch, fixedPitch, n, eL, eR, ext, modBuf[e], em);
             if (metering)
@@ -696,7 +715,9 @@ private:
 
     AnalogEngine analog[kNumEngines];
     WavetableEngine wavetable[kNumEngines];
+    OrganEngine organ[kNumEngines];
     UtilityEngine utility;
+    const GlobalMod* gm = nullptr;
     int lastType[kNumEngines] { EngineAnalog, EngineAnalog };
     float prevMod[kNumEngines][kBlock] {};
 
@@ -706,6 +727,8 @@ private:
         lastType[e] = ep.type;
         if (ep.type == EngineWavetable)
             wavetable[e].startNote (ep, seed);
+        else if (ep.type == EngineOrgan)
+            organ[e].startNote (ep, seed);
         else
             analog[e].startNote (ep, seed);
     }

@@ -25,7 +25,7 @@ const juce::StringArray kFilterTypes { "Classic", "Cluster", "Phaser", "Formant"
 const juce::StringArray kFilterFmSources { "Engine 1", "Engine 2", "Utility", "Noise" };
 const juce::StringArray kFilterOutputs { "Sum", "Split (F1>FX A, F2>FX B)", "Split Reversed (F1>FX B, F2>FX A)" };
 const juce::StringArray kVoicing { "Mono", "Mono Legato", "Poly Reassign", "Poly Rotate" };
-const juce::StringArray kEngineTypes { "Analog", "Wavetable" };
+const juce::StringArray kEngineTypes { "Analog", "Wavetable", "Organ" }; // append only
 const juce::StringArray kFmTypes { "Linear FM", "Exponential FM", "Ring Mod" };
 const juce::StringArray kRetrig { "Key", "Random", "Free", "Mod Osc" };
 const juce::StringArray kPdShapes { "Pulse Width", "Skew", "Mirror", "Sync", "Steps", "Bend", "Squeeze" };
@@ -458,6 +458,35 @@ void addSeq (Builder& b)
     b.boolean ("seq_lock", "Seq Lock Pattern", false, [] (SynthParams& s, float v) { s.seq.lock = asBool (v); });
 }
 
+// Milestone 8: the Organ engine type (appended after everything else; IDs are permanent).
+void addOrgan (Builder& b, size_t e)
+{
+    const int num = (int) e + 1;
+    const juce::String p = "e" + juce::String (num) + "_org_";
+    const juce::String n = "Eng" + juce::String (num) + " Organ ";
+    b.group = "Engine " + juce::String (num) + " Organ";
+    static const char* const kFeet[cs::kNumDrawbars] = { "16'", "5 1/3'", "8'", "4'", "2 2/3'", "2'", "1 3/5'", "1 1/3'", "1'" };
+    const cs::OrganParams defaults;
+    for (size_t d = 0; d < (size_t) cs::kNumDrawbars; ++d)
+        b.flt (p + "db" + juce::String ((int) d + 1), n + "Drawbar " + kFeet[d], 0, 8, defaults.drawbar[d],
+               [e, d] (SynthParams& s, float v) { s.engine[e].org.drawbar[d] = v; });
+    b.flt (p + "char", n + "Wheel Character", 0, 1, defaults.character, [e] (SynthParams& s, float v) { s.engine[e].org.character = v; });
+    b.choice (p + "tuning", n + "Tuning", juce::StringArray { "Tonewheel", "Equal" }, 0,
+              [e] (SynthParams& s, float v) { s.engine[e].org.equalTemp = asInt (v) == 1; });
+    b.boolean (p + "bass", n + "Bass All the Way Down", true, [e] (SynthParams& s, float v) { s.engine[e].org.bassDown = asBool (v); });
+    b.flt (p + "leak", n + "Leakage", 0, 1, defaults.leakage, [e] (SynthParams& s, float v) { s.engine[e].org.leakage = v; });
+    b.flt (p + "click", n + "Key Click", 0, 1, defaults.click, [e] (SynthParams& s, float v) { s.engine[e].org.click = v; });
+    b.flt (p + "click_tone", n + "Click Tone", 0, 1, defaults.clickTone, [e] (SynthParams& s, float v) { s.engine[e].org.clickTone = v; });
+    b.boolean (p + "perc", n + "Percussion", false, [e] (SynthParams& s, float v) { s.engine[e].org.perc = asBool (v); });
+    b.choice (p + "perc_harm", n + "Percussion Harmonic", juce::StringArray { "Second", "Third" }, 1,
+              [e] (SynthParams& s, float v) { s.engine[e].org.percThird = asInt (v) == 1; });
+    b.choice (p + "perc_decay", n + "Percussion Decay", juce::StringArray { "Fast", "Slow" }, 0,
+              [e] (SynthParams& s, float v) { s.engine[e].org.percSlow = asInt (v) == 1; });
+    b.choice (p + "perc_vol", n + "Percussion Volume", juce::StringArray { "Normal", "Soft" }, 0,
+              [e] (SynthParams& s, float v) { s.engine[e].org.percSoft = asInt (v) == 1; });
+    b.boolean (p + "perc_cut", n + "Percussion Mutes 1'", true, [e] (SynthParams& s, float v) { s.engine[e].org.percCut1 = asBool (v); });
+}
+
 std::vector<ParamDef> build()
 {
     Builder b;
@@ -509,6 +538,9 @@ std::vector<ParamDef> build()
     b.group = "Master";
     b.flt ("master_vol", "Master Volume", 0, 1, 0.8f, [] (SynthParams& s, float v) { s.masterVolume = v; });
     b.flt ("master_width", "Master Width", 0, 1, 1, [] (SynthParams& s, float v) { s.masterWidth = v; });
+
+    addOrgan (b, 0);
+    addOrgan (b, 1);
 
     return b.defs;
 }

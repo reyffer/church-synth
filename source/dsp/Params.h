@@ -21,7 +21,8 @@ enum Wave : int { WaveSine = 0, WaveTriangle, WaveSaw, WaveRamp, WaveSquare, Wav
 
 enum UnisonMode : int { UnisonClassic = 0, UnisonChord, UnisonSuper, UnisonModeCount };
 
-enum EngineType : int { EngineAnalog = 0, EngineWavetable, EngineTypeCount };
+// Engine types. Order is stored in presets: append only (Section, Modelled planned, SPEC §3.5).
+enum EngineType : int { EngineAnalog = 0, EngineWavetable, EngineOrgan, EngineTypeCount };
 
 enum WtFmType : int { FmLinear = 0, FmExponential, FmRing, FmTypeCount };
 enum WtRetrig : int { RetrigKey = 0, RetrigRandom, RetrigFree, RetrigModOsc, RetrigCount };
@@ -137,6 +138,25 @@ struct WavetableParams
     int modWave = ModSine;
 };
 
+// Organ (tonewheel) engine, SPEC §3.5. Drawbars in footage order:
+// 16', 5 1/3', 8', 4', 2 2/3', 2', 1 3/5', 1 1/3', 1'.
+constexpr int kNumDrawbars = 9;
+struct OrganParams
+{
+    std::array<float, kNumDrawbars> drawbar { 8.0f, 8.0f, 8.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f }; // 0..8
+    float character = 0.35f; // 0 = clean sines .. 1 = vintage wheels (harmonics, level spread)
+    bool equalTemp = false;  // false = tonewheel gear ratios
+    bool bassDown = true;    // false = the 16' folds up in the lowest octave
+    float leakage = 0.2f;    // 0..1, neighbouring wheels faintly audible
+    float click = 0.5f;      // 0..1 key click level (0 = soft contacts, no click)
+    float clickTone = 0.5f;  // 0..1 darker .. brighter click
+    bool perc = false;
+    bool percThird = true;   // false = 2nd harmonic (4'), true = 3rd (2 2/3')
+    bool percSlow = false;
+    bool percSoft = false;
+    bool percCut1 = true;    // percussion on mutes the 1' drawbar (as on the original)
+};
+
 struct EngineParams
 {
     bool on = true;
@@ -166,6 +186,7 @@ struct EngineParams
     float filterMix = 0.0f; // 0 = Filter 1 only, 1 = Filter 2 only
 
     WavetableParams wt {};
+    OrganParams org {};
 };
 
 struct NoiseParams

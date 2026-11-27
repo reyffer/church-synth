@@ -164,6 +164,36 @@ inline void tremolo (B& b, int slot, float amount, float rate)
 
 inline void room (B& b, float send) { hall (b, send, 0.45f, 0.45f); }
 
+// --- Organ engine ---------------------------------------------------------------------
+// Tonewheel organ on engine e with a drawbar registration ("888000000": 16' 5 1/3' 8'
+// 4' 2 2/3' 2' 1 3/5' 1 1/3' 1'), an organ gate, velocity off and the Expression pedal
+// (CC11) as the swell via Amp Mod.
+inline void tonewheel (B& b, int e, const char* bars, float vol = 0.8f)
+{
+    const juce::String p = "e" + juce::String (e + 1) + "_";
+    b.set (p + "on", 1.0f).set (p + "type", (float) EngineOrgan).set (p + "vol", vol);
+    for (int d = 0; d < kNumDrawbars && bars[d] != 0; ++d)
+        b.set (p + "org_db" + juce::String (d + 1), (float) (bars[d] - '0'));
+    b.set ("f1_on", 0.0f);
+    env (b, "env1", 0.0f, 0.5f, 1.0f, 0.005f);
+    b.set ("amp_mod_src", (float) SrcExpression).set ("amp_velo", 0.75f);
+}
+
+inline void percussion (B& b, int e, bool third, bool slow, bool soft = false)
+{
+    const juce::String p = "e" + juce::String (e + 1) + "_org_";
+    b.set (p + "perc", 1.0f).set (p + "perc_harm", third ? 1.0f : 0.0f).set (p + "perc_decay", slow ? 1.0f : 0.0f).set (p + "perc_vol", soft ? 1.0f : 0.0f);
+}
+
+// Organ Scanner (mode 0..5 = V1 V2 V3 C1 C2 C3) then the rotary speaker; the mod
+// wheel switches the rotary to Fast (past half way).
+inline void organFx (B& b, int scannerMode, float drive = 0.2f, int scannerSlot = 0, int rotarySlot = 1)
+{
+    b.fx (scannerSlot, FxOrganScanner, { { 0, ((float) scannerMode + 0.5f) / 6.0f } });
+    b.fx (rotarySlot, FxRotary, { { 5, drive } });
+    b.route ("Mod Wheel", juce::String ("fx_") + kSlot[rotarySlot] + "_p1", 1.0f);
+}
+
 inline void bassSeq (B& b, int rate, std::initializer_list<int> steps, float gate)
 {
     b.set ("seq_on", 1.0f).set ("seq_mode", 1.0f).set ("seq_rate", (float) rate).set ("seq_vel_blend", 0.6f);

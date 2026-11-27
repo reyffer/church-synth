@@ -56,6 +56,8 @@ const FxInfo kFxInfo[FxTypeCount] = {
       D { 0.5f, 0.3f, 0.0f, 0.0f, 0.3f, 1.0f, 0.0f }, true },
     { "Rotary", "Modulation", P { "Speed", "Slow Rate", "Fast Rate", "Ramp", "Horn/Drum", "Drive", "Spread", "Dry/Wet", "Brake" },
       D { 0.0f, 0.5f, 0.6f, 0.5f, 0.5f, 0.2f, 0.8f, 1.0f, 0.0f }, false },
+    { "Organ Scanner", "Modulation", P { "Mode", "Rate", "Depth", "Tone", "Stereo", "Dry/Wet" },
+      D { 0.9167f, 0.56f, 0.5f, 0.5f, 0.0f, 1.0f }, false },
 };
 
 // Linear dry/wet: for effects whose wet signal is a processed copy of the dry one.
@@ -1350,6 +1352,73 @@ private:
 };
 
 // ===========================================================================
+// Organ Scanner: our model of the tonewheel organ's vibrato / chorus. The signal
+// runs down a short delay line (about 1 ms) with taps every 0.125 ms; a rotating
+// pickup sweeps across the taps, crossfading two neighbours at a time (that
+// crossfade, not a smooth delay, gives it its slightly grainy shimmer). V1..V3
+// sweep a third, two thirds or all of the line (wet only = vibrato); C1..C3 add
+// the dry signal for the chorus. Rate about 6.9 Hz. Mono in the original: Stereo
+// offsets the right side's sweep.
+class OrganScannerFx final : public Effect
+{
+public:
+    void prepare (float sr) override
+    {
+        sampleRate = sr;
+        for (auto& d : line)
+            d.prepare ((int) (0.003f * sr) + 8);
+        reset();
+    }
+    void reset() override
+    {
+        for (auto& d : line)
+            d.clear();
+        tone.reset();
+    }
+    void process (float* l, float* r, int n, const float* p, bool, const FxContext&) noexcept override
+    {
+        const int mode = choice (p[0], 6); // V1 V2 V3 C1 C2 C3
+        const bool chorus = mode >= 3;
+        static const float kSpan[3] = { 0.36f, 0.66f, 1.0f }; // fraction of the line swept
+        const float rate = 5.5f + 2.5f * std::clamp (p[1], 0.0f, 1.0f); // Hz, 6.9 at the default
+        const float depth = 2.0f * std::clamp (p[2], 0.0f, 1.0f);       // 1 = the mode's own depth
+        tone.set (filt::prewarp (expMap (p[3], 3000.0f, 16000.0f), sampleRate));
+        const float stereo = std::clamp (p[4], 0.0f, 1.0f) * 0.25f;     // up to a quarter turn apart
+        const float mix = std::clamp (p[5], 0.0f, 1.0f);
+        const float tapSpacing = 0.000125f * sampleRate;                // samples between taps
+        const float span = std::min (12.0f, 8.0f * kSpan[mode % 3] * depth); // in taps (8 = the whole line, more = deeper than the original)
+        const float inc = rate / sampleRate;
+        float* io[2] = { l, r };
+        for (int i = 0; i < n; ++i)
+        {
+            phase += inc;
+            phase -= std::floor (phase);
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                const float x = io[ch][i];
+                line[ch].push (x);
+                // Pickup position: a rounded triangle across the swept taps.
+                const float ph = wrap01 (phase + (ch == 1 ? stereo : 0.0f));
+                const float tri = 1.0f - std::abs (2.0f * ph - 1.0f);
+                const float pos = span * (tri * tri * (3.0f - 2.0f * tri)); // smoothstep rounding at the turns
+                const int t0 = (int) pos;
+                const float f = pos - (float) t0;
+                const float a = line[ch].read (1.0f + tapSpacing * (float) t0);
+                const float b = line[ch].read (1.0f + tapSpacing * (float) (t0 + 1));
+                const float wet = tone.lp (ch, a + f * (b - a));
+                const float y = chorus ? 0.5f * (x + wet) : wet;
+                io[ch][i] = x + mix * (y - x);
+            }
+        }
+    }
+
+private:
+    float sampleRate = 48000.0f, phase = 0.0f;
+    Delay line[2];
+    filt::OnePole tone;
+};
+
+// ===========================================================================
 class PannerFx final : public Effect
 {
 public:
@@ -1428,6 +1497,7 @@ std::unique_ptr<Effect> makeEffect (int type, float sampleRate)
         case FxPhaser: e = std::make_unique<PhaserFx>(); break;
         case FxPanner: e = std::make_unique<PannerFx>(); break;
         case FxRotary: e = std::make_unique<RotaryFx>(); break;
+        case FxOrganScanner: e = std::make_unique<OrganScannerFx>(); break;
         default: return nullptr;
     }
     e->type = type;

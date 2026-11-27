@@ -116,6 +116,9 @@ int main (int argc, char** argv)
         padWithFx (chord8),
         allFxSlots (chord8),
         arpWithFx ({ 48, 55, 60, 64 }),
+        { "organ_8voices", patches::organ(), chord8 },
+        { "organ_all_out_16voices", patches::organ (true),
+          { 36, 43, 48, 52, 55, 59, 60, 62, 64, 67, 69, 71, 72, 74, 76, 79 } },
     };
 
     std::printf ("%-26s %10s %12s   (best of 3)\n", "patch", "us/block", "% one core");

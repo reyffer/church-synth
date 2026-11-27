@@ -4,6 +4,8 @@
 #include "Patches.h"
 #include "dsp/SynthCore.h"
 #include "dsp/WavetableEngine.h"
+#include "dsp/OrganEngine.h"
+#include "dsp/fx/Effects.h"
 #include "dsp/ModMatrix.h"
 #include "dsp/ModSources.h"
 #include "dsp/fx/FxHost.h"
@@ -13,6 +15,8 @@
 #include <cstdio>
 #include <memory>
 #include <vector>
+#include <tuple>
+#include <string>
 
 using namespace cs;
 
@@ -1957,6 +1961,235 @@ static void testIdleSkip()
     CHECK (pk > 1.0e-3f, "idle: a note wakes it at once");
 }
 
+// --- Organ engine (Milestone 8) ---------------------------------------------------------
+// Magnitude of frequency f in x (single-bin DFT with a Hann window).
+static float toneLevel (const std::vector<float>& x, float f, float sr)
+{
+    double re = 0, im = 0;
+    const size_t n = x.size();
+    for (size_t i = 0; i < n; ++i)
+    {
+        const double w = 0.5 - 0.5 * std::cos (2.0 * M_PI * (double) i / (double) (n - 1));
+        const double ph = 2.0 * M_PI * f * (double) i / sr;
+        re += x[i] * w * std::cos (ph);
+        im += x[i] * w * std::sin (ph);
+    }
+    return (float) (2.0 * std::sqrt (re * re + im * im) / (0.5 * (double) n));
+}
+
+static std::vector<float> renderMono (SynthCore& s, int frames)
+{
+    std::vector<float> out ((size_t) frames), r ((size_t) frames);
+    for (int pos = 0; pos < frames; pos += 128)
+        s.render (out.data() + pos, r.data() + pos, std::min (128, frames - pos));
+    return out;
+}
+
+static void testOrganEngine()
+{
+    constexpr float sr = 48000.0f;
+    auto make = [&] {
+        auto s = std::make_unique<SynthCore>();
+        s->setSampleRate (sr);
+        s->params = patches::organ();
+        s->params.engine[0].org.perc = false;
+        s->params.engine[0].org.leakage = 0.0f;
+        s->params.engine[0].org.click = 0.0f;
+        return s;
+    };
+    // Tonewheel tuning: C4 on 888 000 000 = wheels 25 (16'), 44 (5 1/3') and 37 (8').
+    {
+        auto s = make();
+        s->noteOn (60, 0.8f);
+        renderMono (*s, 4800);
+        const auto x = renderMono (*s, 24000);
+        const float wheel16 = 20.0f * 85.0f / 104.0f * 8.0f, wheel8 = wheel16 * 2.0f, wheel5 = 20.0f * 98.0f / 80.0f * 16.0f;
+        const float a = toneLevel (x, wheel16, sr), b = toneLevel (x, wheel8, sr), c = toneLevel (x, wheel5, sr);
+        const float off = toneLevel (x, 440.0f, sr);
+        CHECK (a > 0.01f && b > 0.01f && c > 0.01f, "organ: the three drawbars sound at the tonewheel frequencies");
+        CHECK (off < 0.02f * b, "organ: nothing at an unrelated frequency");
+        CHECK (std::abs (b - a) < 0.25f * b, "organ: full drawbars have equal levels");
+        // Equal temperament moves the 5 1/3' (G4) from 392.00 to 391.995: tiny; the 8' C4 moves 261.54 -> 261.63.
+        auto e = make();
+        e->params.engine[0].org.equalTemp = true;
+        e->noteOn (60, 0.8f);
+        renderMono (*e, 4800);
+        const auto y = renderMono (*e, 96000);
+        CHECK (toneLevel (y, 261.6256f, sr) > 1.5f * toneLevel (y, 261.0f, sr), "organ: equal temperament switch");
+    }
+    // Drawbar levels: 8 = 0 dB, each step about -3 dB; 0 = silent.
+    {
+        CHECK (std::abs (organ::drawbarGain (8.0f) - 1.0f) < 1.0e-6f, "drawbar 8 = 0 dB");
+        CHECK (std::abs (20.0f * std::log10 (organ::drawbarGain (6.0f)) + 6.0f) < 0.1f, "drawbar 6 = -6 dB");
+        CHECK (organ::drawbarGain (0.0f) == 0.0f, "drawbar 0 = off");
+        CHECK (organ::wheelFor (36, 0, true) == 1 && organ::wheelFor (36, 0, false) == 13, "16' folds up in the lowest octave when Bass Down is off");
+        CHECK (organ::wheelFor (108, 8, true) <= organ::kNumWheels, "top footage folds back below the last wheel");
+    }
+    // Free-running phases: the same key played at two moments starts differently;
+    // two drawbars on the same wheel (foldback) add in phase (double level, not random).
+    {
+        auto s = make();
+        s->noteOn (60, 0.8f);
+        const auto a = renderMono (*s, 960);
+        s->noteOff (60);
+        renderMono (*s, 4801); // the clock moves on by an odd amount
+        s->noteOn (60, 0.8f);
+        const auto b = renderMono (*s, 960);
+        float diff = 0.0f;
+        for (size_t i = 200; i < 960; ++i)
+            diff = std::max (diff, std::abs (a[i] - b[i]));
+        CHECK (diff > 0.01f, "organ: a key never starts at the same wheel phase");
+
+        // Top key: 2' and 1' both fold to the top octave of wheels -> same wheel for 1 3/5'? Use 2' and 1' at MIDI 103:
+        // 2' = 103 + 24 = 127 -> folds to wheel of 115-12.., 1' = 139 -> folds; check they share a wheel then measure.
+        const int key = 103;
+        CHECK (organ::wheelFor (key, 5, true) == organ::wheelFor (key, 8, true), "test setup: 2' and 1' fold onto one wheel");
+        auto one = make(), two = make();
+        for (auto* t : { one.get(), two.get() })
+            for (auto& d : t->params.engine[0].org.drawbar)
+                d = 0.0f;
+        one->params.engine[0].org.drawbar[5] = 8.0f;
+        two->params.engine[0].org.drawbar[5] = 8.0f;
+        two->params.engine[0].org.drawbar[8] = 8.0f;
+        one->noteOn (key, 0.8f);
+        two->noteOn (key, 0.8f);
+        renderMono (*one, 4800);
+        renderMono (*two, 4800);
+        const auto x1 = renderMono (*one, 9600), x2 = renderMono (*two, 9600);
+        float p1 = 0.0f, p2 = 0.0f;
+        for (size_t i = 0; i < x1.size(); ++i)
+        {
+            p1 = std::max (p1, std::abs (x1[i]));
+            p2 = std::max (p2, std::abs (x2[i]));
+        }
+        CHECK (std::abs (p2 / p1 - 2.0f) < 0.1f, "organ: drawbars on one wheel add exactly in phase");
+    }
+    // Percussion: only from all keys up (single trigger), and it decays.
+    {
+        auto s = make();
+        s->params.engine[0].org.perc = true; // 3rd harmonic, fast
+        s->noteOn (60, 0.8f);
+        const auto first = renderMono (*s, 2400);
+        const float pingA = toneLevel (first, 784.0f, sr); // 2 2/3' of C4 = G5 wheel (~784 Hz)
+        renderMono (*s, 24000);
+        const auto late = renderMono (*s, 2400);
+        CHECK (pingA > 0.05f && toneLevel (late, 784.0f, sr) < 0.1f * pingA, "organ: percussion decays");
+        s->noteOn (64, 0.8f); // legato: C4 still held
+        const auto legato = renderMono (*s, 2400);
+        const float pingB = toneLevel (legato, 987.77f, sr); // 3rd harmonic of E4 (B5)
+        CHECK (pingB < 0.1f * pingA, "organ: no new percussion while a key is held");
+        s->noteOff (60);
+        s->noteOff (64);
+        renderMono (*s, 4800);
+        s->noteOn (67, 0.8f);
+        const auto again = renderMono (*s, 2400);
+        CHECK (toneLevel (again, 1174.66f, sr) > 0.5f * pingA, "organ: percussion again after all keys are up");
+    }
+    // Key click: Click 1 puts a burst of highs at the key down; Click 0 starts cleanly.
+    {
+        float hf[2] {};
+        for (int k = 0; k < 2; ++k)
+        {
+            auto s = make();
+            s->params.engine[0].org.click = k == 0 ? 0.0f : 1.0f;
+            s->noteOn (60, 0.8f);
+            const auto x = renderMono (*s, 480);
+            float prev = 0.0f;
+            for (float v : x) // first difference ~ highs
+            {
+                hf[k] = std::max (hf[k], std::abs (v - prev));
+                prev = v;
+            }
+        }
+        CHECK (hf[1] > 4.0f * hf[0], "organ: key click");
+    }
+    // Stability: everything out, extreme settings, bend, glide: finite and bounded.
+    {
+        auto s = std::make_unique<SynthCore>();
+        s->setSampleRate (sr);
+        s->params = patches::organ (true);
+        s->params.engine[0].org.perc = true;
+        s->params.engine[0].org.click = 1.0f;
+        s->params.engine[0].org.bassDown = false;
+        s->params.glide = 0.3f;
+        for (int n : { 0, 12, 36, 60, 96, 108, 120, 127 })
+            s->noteOn (n, 1.0f);
+        s->setPitchBend (1.0f);
+        const auto st = renderStats (*s, 48000);
+        CHECK (st.finite && st.peak <= 1.0f, "organ: extreme settings stay finite and bounded");
+        CHECK (std::abs (st.dc) < 0.01f, "organ: no DC");
+    }
+    // Zero cost / no change for the other engines: an analog patch renders the same
+    // whatever the (unused) organ settings are.
+    {
+        auto a = std::make_unique<SynthCore>(), b = std::make_unique<SynthCore>();
+        for (auto* t : { a.get(), b.get() })
+        {
+            t->setSampleRate (sr);
+            t->params = patches::pad();
+        }
+        b->params.engine[0].org.perc = true;
+        b->params.engine[0].org.drawbar.fill (3.0f);
+        for (auto* t : { a.get(), b.get() })
+            for (int n : { 48, 55, 60 })
+                t->noteOn (n, 0.8f);
+        const auto xa = renderMono (*a, 9600), xb = renderMono (*b, 9600);
+        CHECK (xa == xb, "organ settings don't touch an analog patch");
+    }
+}
+
+// Organ Scanner: V modes are pitch vibrato at ~6.9 Hz (wet only), C modes mix in the dry.
+static void testOrganScanner()
+{
+    constexpr float sr = 48000.0f;
+    const auto& info = fx::fxInfo (fx::FxOrganScanner);
+    CHECK (std::string (info.name) == "Organ Scanner" && fx::FxOrganScanner == 21, "Organ Scanner is FX type 21");
+    auto run = [&] (int mode) {
+        auto e = fx::makeEffect (fx::FxOrganScanner, sr);
+        float p[fx::kFxParams] {};
+        for (int k = 0; k < fx::kFxParams; ++k)
+            p[k] = info.defaults[(size_t) k];
+        p[0] = ((float) mode + 0.5f) / 6.0f;
+        std::vector<float> l (48000), r (48000);
+        for (size_t i = 0; i < l.size(); ++i)
+            l[i] = r[i] = 0.5f * std::sin (2.0f * kPi * 1000.0f * (float) i / sr);
+        fx::FxContext ctx;
+        for (size_t pos = 0; pos < l.size(); pos += 128)
+            e->process (l.data() + pos, r.data() + pos, (int) std::min<size_t> (128, l.size() - pos), p, false, ctx);
+        // Instantaneous frequency spread via zero crossings (second half).
+        std::vector<float> periods;
+        float last = -1.0f;
+        for (size_t i = 24001; i < l.size(); ++i)
+            if (l[i - 1] < 0.0f && l[i] >= 0.0f)
+            {
+                const float t = (float) (i - 1) + l[i - 1] / (l[i - 1] - l[i]);
+                if (last >= 0.0f)
+                    periods.push_back (t - last);
+                last = t;
+            }
+        float mn = 1e9f, mx = 0.0f, pk = 0.0f;
+        for (float v : periods) { mn = std::min (mn, v); mx = std::max (mx, v); }
+        for (size_t i = 24000; i < l.size(); ++i) pk = std::max (pk, std::abs (l[i]));
+        // Level movement (in dB) over 5 ms windows: the chorus beats against the dry.
+        float lo = 1e9f, hi = 0.0f;
+        for (size_t w = 24000; w + 240 <= l.size(); w += 240)
+        {
+            double e2 = 0.0;
+            for (size_t i = w; i < w + 240; ++i) e2 += (double) l[i] * l[i];
+            lo = std::min (lo, (float) e2);
+            hi = std::max (hi, (float) e2);
+        }
+        return std::tuple<float, float, float> { 1200.0f * std::log2 (mx / mn), pk, 10.0f * std::log10 (hi / lo) };
+    };
+    const auto v1 = run (0), v3 = run (2), c3 = run (5);
+    std::printf ("scanner: V1 %.1f c, V3 %.1f c (pk %.2f, level move %.1f dB), C3 level move %.1f dB\n",
+                 std::get<0> (v1), std::get<0> (v3), std::get<1> (v3), std::get<2> (v3), std::get<2> (c3));
+    CHECK (std::get<0> (v3) > 2.5f * std::get<0> (v1), "scanner: V3 is deeper than V1");
+    CHECK (std::get<0> (v3) > 20.0f && std::get<0> (v3) < 120.0f, "scanner: V3 depth is a vibrato, not a pitch bend");
+    CHECK (std::get<1> (v3) > 0.4f && std::get<1> (v3) < 0.56f, "scanner: vibrato keeps the level");
+    CHECK (std::get<2> (c3) > std::get<2> (v3) + 3.0f, "scanner: chorus modes beat against the dry");
+}
+
 int main()
 {
     testDriveAddsHarmonics();
@@ -2016,6 +2249,8 @@ int main()
     testLegatoVelocityNoClick();
     testMetersAndDots();
     testHeavyPatchSane();
+    testOrganEngine();
+    testOrganScanner();
     if (failures == 0)
         std::printf ("All tests passed.\n");
     return failures == 0 ? 0 : 1;

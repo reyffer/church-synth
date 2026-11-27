@@ -73,6 +73,15 @@ std::vector<ModDest> build()
         add (w + "mod_hz", wn + "Mod Osc Fixed Hz", 0.1f, 10000, true, [e] (SynthParams& s) -> float& { return s.engine[e].wt.modHz; });
         add (w + "mod_fine", wn + "Mod Osc Fine", -1, 1, false, [e] (SynthParams& s) -> float& { return s.engine[e].wt.modFine; });
         add (w + "mod_vol", wn + "Mod Osc Volume", 0, 1, false, [e] (SynthParams& s) -> float& { return s.engine[e].wt.modVolume; });
+
+        const std::string o = p + "org_", on = n + "Organ ";
+        static const char* const kFeet[kNumDrawbars] = { "16'", "5 1/3'", "8'", "4'", "2 2/3'", "2'", "1 3/5'", "1 1/3'", "1'" };
+        for (size_t d = 0; d < (size_t) kNumDrawbars; ++d)
+            add (o + "db" + std::to_string (d + 1), on + kFeet[d], 0, 8, false, [e, d] (SynthParams& s) -> float& { return s.engine[e].org.drawbar[d]; });
+        add (o + "char", on + "Wheel Character", 0, 1, false, [e] (SynthParams& s) -> float& { return s.engine[e].org.character; });
+        add (o + "leak", on + "Leakage", 0, 1, false, [e] (SynthParams& s) -> float& { return s.engine[e].org.leakage; });
+        add (o + "click", on + "Key Click", 0, 1, false, [e] (SynthParams& s) -> float& { return s.engine[e].org.click; });
+        add (o + "click_tone", on + "Click Tone", 0, 1, false, [e] (SynthParams& s) -> float& { return s.engine[e].org.clickTone; });
     }
 
     for (size_t k = 0; k < 2; ++k)

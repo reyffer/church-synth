@@ -243,8 +243,74 @@ void Knob::changeListenerCallback (juce::ChangeBroadcaster*)
     repaint();
 }
 
+void Knob::setDrawbar (juce::Colour headColour)
+{
+    drawbar = true;
+    barHead = headColour;
+    slider.setVisible (false); // keeps the attachment; this component draws and drags the bar
+    if (auto* p = ctx.param (paramId))
+        barAtt = std::make_unique<juce::ParameterAttachment> (*p, [this] (float) { repaint(); });
+    setMouseCursor (juce::MouseCursor::UpDownResizeCursor);
+    resized();
+}
+
+juce::Rectangle<float> Knob::barTrack() const
+{
+    auto r = getLocalBounds().toFloat();
+    r.removeFromTop (16.0f);    // footage label
+    r.removeFromBottom (15.0f); // value
+    return r.withSizeKeepingCentre (juce::jmin (r.getWidth(), 22.0f), r.getHeight());
+}
+
+void Knob::mouseDown (const juce::MouseEvent& e)
+{
+    if (! drawbar || e.eventComponent != this)
+        return;
+    if (e.mods.isPopupMenu())
+    {
+        showContextMenu (ctx, paramId, this);
+        return;
+    }
+    barStart = (float) slider.getValue();
+    barDragging = true;
+    if (barAtt != nullptr)
+        barAtt->beginGesture();
+    repaint();
+}
+
+void Knob::mouseDrag (const juce::MouseEvent& e)
+{
+    if (! drawbar || ! barDragging || barAtt == nullptr || e.eventComponent != this)
+        return;
+    const float range = pdef != nullptr ? pdef->max - pdef->min : 8.0f;
+    const float perPixel = range / juce::jmax (40.0f, barTrack().getHeight() * 0.85f);
+    float v = barStart + (float) e.getDistanceFromDragStartY() * perPixel * (e.mods.isShiftDown() ? 0.25f : 1.0f);
+    v = juce::jlimit (0.0f, range, v);
+    if (! e.mods.isShiftDown())
+        v = std::round (v);
+    barAtt->setValueAsPartOfGesture (v);
+}
+
+void Knob::mouseUp (const juce::MouseEvent& e)
+{
+    if (! drawbar || ! barDragging || e.eventComponent != this)
+        return;
+    barDragging = false;
+    if (barAtt != nullptr)
+        barAtt->endGesture();
+    repaint();
+}
+
+void Knob::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    if (drawbar && e.eventComponent == this && barAtt != nullptr && pdef != nullptr)
+        barAtt->setValueAsCompleteGesture (pdef->def);
+}
+
 juce::Rectangle<float> Knob::dialBounds() const
 {
+    if (drawbar)
+        return barTrack();
     auto r = getLocalBounds().toFloat();
     const float labelH = label.isEmpty() ? 0.0f : 15.0f;
     const float d = juce::jmin (r.getWidth(), r.getHeight() - labelH);
@@ -268,6 +334,55 @@ juce::String Knob::valueText() const
 
 void Knob::paint (juce::Graphics& g)
 {
+    if (drawbar)
+    {
+        const auto track = barTrack();
+        const float range = pdef != nullptr ? pdef->max - pdef->min : 8.0f;
+        const float v = juce::jlimit (0.0f, 1.0f, (float) slider.getValue() / juce::jmax (1.0f, range));
+        // Footage above, the slot, then the bar pulled out from the top with its head.
+        g.setColour (hover || barDragging ? col::text : col::textDim);
+        g.setFont (font (11.0f, true));
+        g.drawFittedText (label, getLocalBounds().removeFromTop (16).expanded (4, 0), juce::Justification::centred, 1, 0.7f);
+        g.setColour (col::panelLo);
+        g.fillRoundedRectangle (track.expanded (3.0f, 2.0f), 4.0f);
+        g.setColour (col::border);
+        g.drawRoundedRectangle (track.expanded (3.0f, 2.0f), 4.0f, 1.0f);
+        const float headH = 18.0f;
+        const float travel = track.getHeight() - headH;
+        const float headY = track.getY() + v * travel;
+        auto shaft = juce::Rectangle<float> (track.getX() + 4.0f, track.getY(), track.getWidth() - 8.0f, headY - track.getY());
+        g.setColour (juce::Colour (0xffcfc9bb));
+        g.fillRect (shaft);
+        // Step numbers on the shaft (visible as it is pulled out).
+        g.setFont (font (8.5f));
+        g.setColour (juce::Colour (0xff3a3630));
+        for (int k = 1; k <= 8; ++k)
+        {
+            const float y = headY - (float) k * travel / 8.0f;
+            if (y < track.getY())
+                break;
+            g.drawText (juce::String (k), juce::Rectangle<float> (shaft.getX(), y, shaft.getWidth(), travel / 8.0f), juce::Justification::centred);
+        }
+        auto head = juce::Rectangle<float> (track.getX(), headY, track.getWidth(), headH);
+        g.setColour (barHead);
+        g.fillRoundedRectangle (head, 3.0f);
+        g.setColour (barHead.getBrightness() > 0.5f ? juce::Colours::black.withAlpha (0.35f) : juce::Colours::white.withAlpha (0.25f));
+        g.drawRoundedRectangle (head.reduced (0.5f), 3.0f, 1.0f);
+        g.drawHorizontalLine ((int) head.getCentreY(), head.getX() + 4.0f, head.getRight() - 4.0f);
+        // Value (or the mod amount being edited) below.
+        auto text = getLocalBounds().removeFromBottom (15);
+        juce::String t = juce::String (slider.getValue(), std::abs (slider.getValue() - std::round (slider.getValue())) < 0.01 ? 0 : 1);
+        auto c = barDragging || hover ? col::text : col::accent;
+        if (editingMod)
+        {
+            t = (modDragAmount >= 0 ? "+" : "") + juce::String (juce::roundToInt (modDragAmount * 100.0f)) + " %";
+            c = sourceColour (ctx.selectedSource);
+        }
+        g.setColour (c);
+        g.setFont (font (11.0f));
+        g.drawFittedText (t, text.expanded (4, 0), juce::Justification::centred, 1, 0.8f);
+        return;
+    }
     if (label.isEmpty())
         return;
     auto r = getLocalBounds();
@@ -293,6 +408,33 @@ void Knob::paintOverChildren (juce::Graphics& g)
 {
     if (dest < 0)
         return;
+    if (drawbar)
+    {
+        // Modulation as coloured lines beside the slot, from the bar's level by the route amount.
+        const auto t = dialBounds();
+        const float range = pdef != nullptr ? pdef->max - pdef->min : 8.0f;
+        const float v = juce::jlimit (0.0f, 1.0f, (float) slider.getValue() / juce::jmax (1.0f, range));
+        if (dropHover)
+        {
+            g.setColour (col::gold.withAlpha (0.6f));
+            g.drawRoundedRectangle (t.expanded (4.0f, 3.0f), 4.0f, 2.0f);
+        }
+        float x = t.getRight() + 5.0f;
+        for (const auto& m : ctx.routesTo (dest))
+        {
+            const float y0 = t.getY() + v * t.getHeight(), y1 = t.getY() + juce::jlimit (0.0f, 1.0f, v + m.second) * t.getHeight();
+            const bool sel = m.first == ctx.selectedSource;
+            g.setColour (sourceColour (m.first).withAlpha (ctx.selectedSource < 0 || sel ? 1.0f : 0.35f));
+            g.fillRect (juce::Rectangle<float> (x, juce::jmin (y0, y1), sel ? 3.0f : 2.0f, juce::jmax (2.0f, std::abs (y1 - y0))));
+            x += 3.0f;
+        }
+        if (ctx.selectedSource >= 0 && ! ctx.hasRoute (ctx.selectedSource, dest))
+        {
+            g.setColour (sourceColour (ctx.selectedSource).withAlpha (0.8f));
+            g.fillEllipse (t.getRight() + 2.0f, t.getY() - 8.0f, 5.0f, 5.0f);
+        }
+        return;
+    }
     const auto d = dialBounds();
     const auto c = d.getCentre();
     const float radius = d.getWidth() * 0.5f;
