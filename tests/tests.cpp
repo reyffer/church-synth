@@ -1963,14 +1963,15 @@ static void testIdleSkip()
 
 // --- Organ engine (Milestone 8) ---------------------------------------------------------
 // Magnitude of frequency f in x (single-bin DFT with a Hann window).
+static constexpr double kTwoPiD = 6.283185307179586;
 static float toneLevel (const std::vector<float>& x, float f, float sr)
 {
     double re = 0, im = 0;
     const size_t n = x.size();
     for (size_t i = 0; i < n; ++i)
     {
-        const double w = 0.5 - 0.5 * std::cos (2.0 * M_PI * (double) i / (double) (n - 1));
-        const double ph = 2.0 * M_PI * f * (double) i / sr;
+        const double w = 0.5 - 0.5 * std::cos (kTwoPiD * (double) i / (double) (n - 1));
+        const double ph = kTwoPiD * f * (double) i / sr;
         re += x[i] * w * std::cos (ph);
         im += x[i] * w * std::sin (ph);
     }

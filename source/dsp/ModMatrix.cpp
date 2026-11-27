@@ -76,8 +76,8 @@ std::vector<ModDest> build()
 
         const std::string o = p + "org_", on = n + "Organ ";
         static const char* const kFeet[kNumDrawbars] = { "16'", "5 1/3'", "8'", "4'", "2 2/3'", "2'", "1 3/5'", "1 1/3'", "1'" };
-        for (size_t d = 0; d < (size_t) kNumDrawbars; ++d)
-            add (o + "db" + std::to_string (d + 1), on + kFeet[d], 0, 8, false, [e, d] (SynthParams& s) -> float& { return s.engine[e].org.drawbar[d]; });
+        for (size_t bar = 0; bar < (size_t) kNumDrawbars; ++bar)
+            add (o + "db" + std::to_string (bar + 1), on + kFeet[bar], 0, 8, false, [e, bar] (SynthParams& s) -> float& { return s.engine[e].org.drawbar[bar]; });
         add (o + "char", on + "Wheel Character", 0, 1, false, [e] (SynthParams& s) -> float& { return s.engine[e].org.character; });
         add (o + "leak", on + "Leakage", 0, 1, false, [e] (SynthParams& s) -> float& { return s.engine[e].org.leakage; });
         add (o + "click", on + "Key Click", 0, 1, false, [e] (SynthParams& s) -> float& { return s.engine[e].org.click; });
