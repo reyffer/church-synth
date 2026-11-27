@@ -56,6 +56,10 @@ CI (`.github/workflows/build.yml`): macOS universal AU/VST3/Standalone with auva
 5. ✅ FX buses and all effects.
 6. ✅ Seq/Arp.
 7. ✅ Presets/browser + Pigments-style UI (dark only).
+8. Organ engine (tonewheel) + Organ Scanner FX (SPEC §3.5).
+9. Section engine (players + body/bell resonators); Packs 4 and 5 rebuilt on it.
+10. Modelled engine (waveguide, experimental), only after 8 and 9.
+Rule for 8–10: `EngineType` 2/3/4 appended; zero cost when not selected; every existing `cs_bench` case within noise before merging.
 
 ## Performance notes
 - Benchmark baseline (x86 container, M1 numbers are in CI): analog pad 8 voices ≈ 5.5 %, wavetable pad ≈ 3.5 %, worst case ≈ 29 % of one core. Content generation for everything ≈ 2.4 s total, but only what's selected is generated.

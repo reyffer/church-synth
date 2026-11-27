@@ -19,9 +19,9 @@ Reference: Arturia Pigments 7.0.1 (manual + screenshots in this folder). We take
 ```
             ┌───────────── per voice ─────────────────────────────┐
  Engine 1 ──┤                                                     │
- (Analog|WT)│ Filter Mix ─► Filter 1 ─┐                           │
+ (§3.1, 3.5)│ Filter Mix ─► Filter 1 ─┐                           │
  Engine 2 ──┤                         ├─ Routing (series↔parallel)├─► Amp (Env Amp × Amp Mod) ─► Voice Pan
- (Analog|WT)│ Filter Mix ─► Filter 2 ─┘   Sum | Split             │
+ (§3.1, 3.5)│ Filter Mix ─► Filter 2 ─┘   Sum | Split             │
  Utility  ──┤  (osc can bypass filters → FX A / FX B / Direct)    │
             └─────────────────────────────────────────────────────┘
                                    │ (summed voices)
@@ -40,7 +40,7 @@ Everything up to and including the amp runs **per voice**. FX run **once per ins
 ## 3. Engines
 
 ### 3.1 Engine 1 and Engine 2 (identical slots)
-Each slot is **Analog** or **Wavetable** (any combination, including two of the same). Each has: on/off, copy/paste/reset (with or without its mod routings), Volume, Filter Mix (F1↔F2).
+Each slot is **Analog** or **Wavetable** (any combination, including two of the same). Planned: **Organ**, **Section** and **Modelled** (§3.5). Each has: on/off, copy/paste/reset (with or without its mod routings), Volume, Filter Mix (F1↔F2).
 
 **Engine tune (both types):** Coarse ±60 st (Shift snaps to octaves), Fine ±1 st, **Mod Quantize** (when Coarse is modulated, snap the result to chosen notes relative to the played key), Keyboard Tracking on/off. Analog also has **Drift** (per-note random tuning/phase offset).
 
@@ -78,6 +78,62 @@ Either main engine can use the other as its Modulator source (both at once is al
 We can't ship Arturia's wavetables or noise samples. Plan:
 - **Wavetables:** generated in code at build time. Basic shapes, PWM sweeps, saw↔square morphs, additive "drawbar organ", vowel/formant sweeps, bright/dark harmonic sweeps, soft "vintage" shapes. Target 40–60 tables in a few categories. Plus user import.
 - **Noise:** generated in code: white, pink, red, blue, rumble, wide (stereo) variants, plus textures (vinyl crackle, tape hiss, air/breath, rain-like). Plus user WAV import (for sounds Reyffer records or downloads).
+
+### 3.5 Planned engine types: Organ, Section, Modelled (not built yet)
+
+Goal: cover the three sounds that still need other plugins in the MainStage rig (organ, strings, brass), so only the acoustic piano stays sample-based. References to beat or match: Logic's Vintage B3 (itself a component model, not samples), Crow Hill Pocket Strings and Logic Studio Horns (both multi-sampled).
+
+**Rules for all three**
+- **Appended to the Engine 1 / Engine 2 type menu:** Analog, Wavetable, **Organ**, **Section**, **Modelled** (`EngineType` 2, 3, 4). Order is permanent. The type parameter gains choices, so saved states and presets must keep loading as the same type: store and read the index, never a normalised value; a state test loads v0.4 presets and checks every engine type.
+- **Zero cost when not chosen.** The engine type is dispatched once per block, never per sample. A voice holds the state of one engine type at a time (union / variant), so voices don't grow for patches that never use the new types. Content (tables, body responses) is generated only when a preset selects the type.
+- **Bench gate.** Before any of these merges, every existing `cs_bench` case (analog pad, wavetable pad, EP and `pad_fx_*`) must be unchanged within noise. Each new engine gets its own bench cases and a CPU target (below).
+- **Same voice path after the engine:** Volume, Filter Mix, filters, amp, FX, modulation, Coarse / Fine / Keytrack, Mod Quantize. Every new knob is a modulation destination and a host parameter (new permanent IDs, appended).
+- **No samples, no copied content.** Everything is generated in code. We model the instrument families, not any product's code or presets.
+- **Unison:** hidden for Organ (one tone per key, like the real thing); replaced by players for Section; off for Modelled (too heavy; use Section or Super Unison instead).
+- **Help-bar text** for every new control, "How it's built" notes on every new preset, as for the existing engines.
+
+#### Organ (tonewheel)
+- **9 drawbars:** 16', 5⅓', 8', 4', 2⅔', 2', 1⅗', 1⅓', 1'. Levels 0–8, continuous with snap to whole steps; drag in the UI like real drawbars. Presets for classic registrations (full gospel, soft ballad, jazz, "all out", flutes) under our own names.
+- **Tonewheels:** 91 wheels, each a near-sine with a small amount of 2nd/3rd harmonic. **Wheel Character** (clean → vintage) sets those harmonics and a small level variation per wheel. Tuning follows the tonewheel gear ratios (slightly off equal temperament), with an Equal Temperament switch.
+- **Free-running phases:** each wheel's phase comes from an instance-wide clock, not from the key press. Like real spinning wheels, a key never starts at the same phase, and two drawbars that land on the same wheel add exactly in phase. This needs no shared buffer: each voice computes its 9 partials from the clock.
+- **Foldback:** high footages fold back an octave past the top wheel; the 16' folds up in the lowest octave (switch "Bass All the Way Down" to keep it down, as in some organs).
+- **Crosstalk / Leakage:** neighbouring wheels faintly audible (amount, default low), the "dirt" between clean and raucous.
+- **Key click:** each drawbar's contact closes at a slightly random moment (0–3 ms spread) with a short click burst at key down and a softer one at key up. Click Level and Click Tone.
+- **Percussion:** on/off, 2nd or 3rd harmonic, Fast / Slow decay, Soft / Normal level, single-trigger (only retriggers after all keys are released; legato playing doesn't retrigger). Option to mute the 1' drawbar while percussion is on, as on the original.
+- **Vibrato / Chorus scanner:** a new FX type, **Organ Scanner** (appended as FX type 21), because the real one processes the summed organ, once per instance. Modes V1, V2, V3, C1, C2, C3 (vibrato = wet only, chorus = dry + wet), rate ≈ 6.9 Hz, depth per mode, a multi-tap scanned delay of about 1 ms. Then the existing **Rotary** (FX 20) with its Drive for the tube overdrive.
+- **Playing:** Env Amp defaults to an organ gate (attack 0, release ≈ 5 ms, the click covers the edges); velocity off by default; Expression (CC11) → volume swell routed in the Init organ preset. One manual: splits and pedal bass are done in MainStage with two instances.
+- **CPU target:** 8 notes × 9 partials, no unison: at most the cost of the analog pad bench case.
+
+#### Section (ensemble strings and brass)
+The missing piece in our current string and brass presets is not the oscillator: a real section is many *independent* players, and their tone passes through a resonant body or bell. This engine plays one note as several players.
+
+- **Family:** Strings or Brass (menu, append-only; Choir or Woodwinds could be added later).
+- **Players:** 1–8 per note (Solo 1, Chamber 3, Section 6, Full 8 as quick picks). Each player has its own band-limited source (strings: bowed saw-like wave; brass: pulse / saw blend) and its own seeded random values, so a chord always sounds the same, never "phasey" like copied voices:
+  - **Intonation:** small tuning offset per player (0–15 cents spread) plus slow drift.
+  - **Vibrato:** own rate (spread around 5–6 Hz) and depth per player, with a fade-in delay; Vibrato Depth and Rate are section-wide knobs that scale them.
+  - **Looseness:** attack timing spread across players (0–40 ms), so entries aren't machine-tight.
+  - **Seating:** players placed across the stereo field (Width) around a Position (e.g. violins left of centre, cellos right), with mono-safe panning.
+- **Dynamics:** one knob that drives level, brightness and vibrato depth together (mod wheel routed to it in the Init presets, the orchestral-library convention; velocity also routable). **Brightness follows loudness non-linearly:** for brass the upper harmonics rise much faster than the fundamental as Dynamics goes up (a soft-saturating spectral shaper driven by Dynamics), for strings the tilt is gentler and adds bow pressure.
+- **Noise:** bow noise (strings) or breath (brass), filtered around each player's pitch, amount follows Dynamics.
+- **Attack (per family):** strings: Bite (bow pressure transient) and Attack (soft ↔ marcato). Brass: Scoop (pitch starts below and rises in 30–80 ms), Blat (short bright burst on loud attacks), Attack (soft ↔ sforzando).
+- **Body / Bell resonator** (the key to realism): after the players of a note are summed, a fixed bank of resonant peaks shapes them. Vibrato moving the harmonics through these fixed peaks creates the shimmer of real strings and the "bloom" of brass. Body types (generated in code, our own response shapes): Violin, Viola, Cello, Bass, Ensemble (blend), and Trumpet, Trombone, Horn, Muted. Body Mix (dry players ↔ body). Implementation: 16 band-pass resonators (strings) or 8 (brass) per voice, processed 4 at a time with SIMD.
+- **Legato:** with Voicing = Mono Legato (Keyboard tab), a slur: glide plus a short dip in brightness and noise (bow change / tongued slur). Used for solo lines.
+- **Mod destinations:** Dynamics, Vibrato Depth, Vibrato Rate, Intonation, Looseness, Noise, Brightness, Body Mix, Width.
+- **CPU target:** 8 notes × 6 players + body ≈ the cost of an 8-voice pad with unison 6 today. A hard cap of 64 player oscillators per instance (same as the unison cap).
+- **Presets:** rebuild Pack 4 (Orchestral Strings) and Pack 5 (Brass) on this engine, keeping the old versions as they are.
+
+#### Modelled (physical modelling) — experimental, last
+Simulates the instrument itself instead of building the sound from oscillators: the most expressive option for solo lines, the heaviest and the riskiest. Only after Organ and Section are done and proven.
+
+- **Models (menu, append-only):** **Bowed String** (a digital waveguide string with a bow-friction junction: Bow Pressure, Bow Speed, Bow Position, bridge filter) and **Lip Brass** (a waveguide bore with a lip-valve model: Breath Pressure, Lip Tension, Bore Length fine, bell filter and radiation). Both feed the Section engine's body / bell resonator.
+- **Needs continuous control:** a held note only lives while pressure is applied. Default routing: mod wheel → Bow Pressure / Breath; aftertouch or Expression (CC11) as alternatives. Without it notes sound static, so Init presets set this up and the help bar says so.
+- **Polyphony:** up to 4 notes (solo instrument or small divisi), no unison. 2× oversampling inside the nonlinear junction only.
+- **Reliability first:** these models can squeak, whistle or blow up. Every model has level clamps, DC blockers and a stability check in the state test (sweep every control at extreme settings, fail on NaN or > 0 dBFS). Fractional-delay tuning must stay within ±3 cents over the keyboard.
+- **CPU target:** one note ≤ 3× an analog voice.
+- **Expected result:** expressive solo cello, violin, trumpet, horn. Full sections stay with the Section engine.
+
+#### How we judge them
+Same method as the effects (FX-ANALYSIS.md): Reyffer renders reference notes and phrases from Logic's Vintage B3, Pocket Strings and Studio Horns; we render the same MIDI through Church Synth offline and compare spectra per dynamic level, vibrato rate / depth spread, attack timing spread, stereo coherence and level. Then a level-matched blind A/B by ear in MainStage, which has the final say.
 
 ## 4. Filters
 
@@ -317,10 +373,13 @@ Bus controls: `fx_on`, `fx_routing` (A>B, B>A, A//B), `fx_a_on`, `fx_b_on`, `fx_
 5. **FX:** buses, routing, all effects in §6, effect presets.
 6. **Seq/Arp.**
 7. **Presets + browser + UI polish**, factory preset set aimed at worship (pads, keys, plucks, swells, ambient beds, arps).
+8. **Organ engine** (§3.5) + Organ Scanner FX + organ presets.
+9. **Section engine** (§3.5) with body / bell resonators; Pack 4 and Pack 5 rebuilt on it.
+10. **Modelled engine** (§3.5, experimental), only after 8 and 9 are proven.
 
 ## 10. Excluded
 
-- Engines: Granular, Sample, Harmonic, Modal.
+- Engines: Granular, Sample, Harmonic, Modal. (The Section engine's body / bell resonator is a fixed resonator bank inside that engine, not a playable Modal engine; Sample stays excluded.)
 - Play view, preset playlists, store, tutorials and sound-design-tips panels.
 - External audio input (Utility Noise 2, Modal exciters), Vocoder.
 - Reverb filter type.
@@ -345,6 +404,7 @@ Bus controls: `fx_on`, `fx_routing` (A>B, B>A, A//B), `fx_a_on`, `fx_b_on`, `fx_
 | 2026-11-06 | Preset packs round 14 (last of the agreed order): Pack 15 Acoustic Pianos (20: grands, soul/gospel incl. an R&B ballad piano, uprights, character, piano+pad/strings layers), all synthesised. Recipe: 'Sine to Saw' wavetable string with 3 unison voices started in phase (Unison Phase 0) so they bloom and beat, a fast-fading FM strike layer (double decay), hammer noise, velocity to level/filter/table position, decay curve 20 with key-tracked decay. Notes are honest that these don't replace a sampled grand. `--render-pack` now plays a piano phrase for Keys presets tagged Piano, and takes `sweep` as a fifth argument (single notes C1–C7, then middle C at three velocities) for checking decay and velocity response. |
 | 2026-11-11 | v0.3.0, learning aids for the aux keys players: preset browser tag chips collapsed to the 12 most-used (Show all tags), User bank expands into its subfolders, Favourite folders (playlists, a preset can be in several; Favourite Folders.xml); sound LEDs on engine tabs and every oscillator / noise / wavetable / modulator / Utility part (peak after its volume, engine volume and amp envelope, i.e. what goes into the filters; measured only while the editor is open, audio unchanged — a test checks it bit for bit); travelling dots on envelopes, LFOs and functions (one per sounding voice, newest bright; a shared generator shows one; unused generators don't run so show none); mod strip: dot on routed tiles, faded lines from the selected source to its knobs on screen plus +n badges on the tabs / pages hiding more targets, and clicking a knob lights up the sources modulating it. Bench unchanged within noise. |
 | 2026-11-25 | v0.4.0 effects, tuned against reference renders (project doc FX-ANALYSIS.md; tools in `tools/fx_analysis`, `cs_fxcli`, `cs_state_test --render-fx`): Reverb gains Mod Depth / Mod Rate / Brightness, 6 diffusers + direct early diffusion (early kurtosis 343 → 8, target 13), brighter defaults; at Decay 2.9 s, Mod 0.6/0.65, Brightness 0.7 it matches the reference modulated reverb's RT60 per band, tail tilt and pitch smear (42 vs 45 cents RMS). Chorus: Pigments-like defaults, independent right-side LFO. Vintage Chorus: rebuilt on the classic structure (taps measured within 0.2 ms of the reference, opposite-phase L/R, I+II mono, same band coherence / side-mid), plus Brightness and Wide (Wide 1 + Brightness 1 matches the bigger poly chorus' side/mid and coherence within 0.5 dB / 0.05). Super Unison: per-side voice sets (mid-band L/R coherence 0.75 → 0.0 at 100 % wet), mono bass (side HP 250 Hz), default ±20 cents. Owner's decision: existing presets may sound different; states saved before (stateVersion < 5) get the reverb's new modulation defaults and neutral brightness (`migrateState`), as do old user FX presets (.csfx without the `v2` marker). |
+| 2026-11-27 | Planned three new engine types (§3.5): **Organ** (tonewheel model + Organ Scanner FX), **Section** (independent players + body / bell resonator, for strings and brass) and **Modelled** (waveguide bowed string and lip brass, experimental, last). Aim: replace the other plugins in the MainStage rig except the acoustic piano. Owner's condition: existing sounds must not get heavier, so new engines cost nothing when not selected and every existing `cs_bench` case must stay within noise before merging. Build order Organ → Section → Modelled. |
 | 2026-11-06 | Preset packs round 12: Pack 13 Famous Sounds (50 timbres with nod names: brass and stabs, leads, keys and bells, pads, basses and sequences, arps). Own recipes only: no copied factory patches, no riffs or melodies (generic arp / sequence patterns). The name-to-inspiration list was given to the owner in conversation, not shipped in the pack. |
 | 2026-11-06 | Preset packs round 11: Pack 12 EDM (20: 7 plucks, 7 stabs, 6 leads). Supersaw = Super unison 7 voices; pump = Function Duck synced 1/4 on the amp; pitch rise = Env 3 on engine coarse; chord stabs = Chord unison. CPU note for the owner: zero-volume oscillators, noises and the Utility oscillator are skipped per voice (only computed when their volume, after modulation, is above 0, or when Osc 3 / noise feed FM); an engine that is on but at 0 volume is still rendered so modulation can bring it in. |
 | 2026-11-06 | Preset packs round 10: Pack 11 Synthwave (50: 8 sequenced / played basses, 9 arps and sequences, 8 plucks, 11 pads, 8 leads, 6 keys and stabs). Pack exporter: if the check run lands more than 1.5 dB off target (random unison phases, free-running modulators), the level is corrected halfway and measured again. Known: four pack preset names repeat factory names (Sanctuary Pad, Dark Drone, Sync Lead, Glass Keys); they live in different banks, left as is. |
