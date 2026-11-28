@@ -60,6 +60,24 @@ inline SynthParams organ (bool allOut = false)
     return p;
 }
 
+// Section engine: 6 players per note through the ensemble body (SPEC §3.5 CPU
+// target: about an 8-voice pad with unison 6).
+inline SynthParams section (bool brass = false)
+{
+    SynthParams p;
+    auto& eng = p.engine[0];
+    eng.type = EngineSection;
+    eng.volume = 0.8f;
+    eng.sec.family = brass ? SectionBrass : SectionStrings;
+    eng.sec.body = brass ? SectionBodyTrumpet : SectionBodyEnsemble;
+    eng.sec.players = 6.0f;
+    p.filter[0].on = false;
+    p.ampEnv.attack = 0.005f;
+    p.ampEnv.release = 0.4f;
+    p.maxVoices = 8;
+    return p;
+}
+
 // Supersaw lead-ish layer.
 inline SynthParams supersaw()
 {

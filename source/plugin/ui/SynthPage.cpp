@@ -427,6 +427,169 @@ private:
     }
 };
 
+// Seating diagram for the Section engine: one dot per player on a stage arc, placed
+// by Players / Width / Position (the same seats the engine uses, less the shuffle).
+class SeatingView final : public juce::Component, public Refreshable
+{
+public:
+    SeatingView (UiContext& c, int engine) : ctx (c), e (engine) {}
+    void refreshView() override
+    {
+        const juce::String x = "e" + juce::String (e + 1) + "_sec_";
+        const int np = juce::jlimit (1, 8, ctx.intValue (x + "players"));
+        const float w = ctx.value (x + "width"), pos = ctx.value (x + "pos");
+        const bool brass = ctx.intValue (x + "family") == cs::SectionBrass;
+        const auto key = juce::String (np) + "/" + juce::String (w, 2) + "/" + juce::String (pos, 2) + (brass ? "b" : "s");
+        if (key != lastKey)
+        {
+            lastKey = key;
+            players = np;
+            width = w;
+            position = pos;
+            isBrass = brass;
+            repaint();
+        }
+    }
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat().reduced (6.0f, 4.0f);
+        g.setColour (col::panelLo);
+        g.fillRoundedRectangle (r, 6.0f);
+        const float cx = r.getCentreX(), base = r.getBottom() - 8.0f, rad = r.getWidth() * 0.42f;
+        juce::Path arc;
+        arc.addCentredArc (cx, base, rad, rad * 0.55f, 0.0f, -juce::MathConstants<float>::halfPi, juce::MathConstants<float>::halfPi, true);
+        g.setColour (col::border);
+        g.strokePath (arc, juce::PathStrokeType (1.0f));
+        g.setColour (col::textDim);
+        g.setFont (font (10.0f));
+        g.drawText ("L", juce::Rectangle<float> (r.getX() + 4.0f, base - 14.0f, 12.0f, 12.0f), juce::Justification::centred);
+        g.drawText ("R", juce::Rectangle<float> (r.getRight() - 16.0f, base - 14.0f, 12.0f, 12.0f), juce::Justification::centred);
+        g.drawText ("you", juce::Rectangle<float> (cx - 20.0f, base - 4.0f, 40.0f, 12.0f), juce::Justification::centred);
+        for (int k = 0; k < players; ++k)
+        {
+            const float sNorm = players == 1 ? 0.0f : 2.0f * (float) k / (float) (players - 1) - 1.0f;
+            const float pan = juce::jlimit (-1.0f, 1.0f, position + width * 0.85f * sNorm);
+            const float ang = pan * juce::MathConstants<float>::halfPi * 0.95f;
+            const float px = cx + rad * std::sin (ang), py = base - rad * 0.55f * std::cos (ang);
+            g.setColour ((isBrass ? col::gold : col::accent).withAlpha (0.9f));
+            g.fillEllipse (px - 5.0f, py - 5.0f, 10.0f, 10.0f);
+        }
+        g.setColour (col::textDim);
+        g.drawText (juce::String (players) + (players == 1 ? " player" : " players"), r.removeFromTop (14.0f).reduced (6.0f, 0.0f),
+                    juce::Justification::centredLeft);
+    }
+
+private:
+    UiContext& ctx;
+    int e, players = 6;
+    float width = 0.7f, position = 0.0f;
+    bool isBrass = false;
+    juce::String lastKey;
+};
+
+// Section (ensemble strings / brass) engine.
+class SectionView final : public ControlPanel
+{
+public:
+    SectionView (UiContext& c, int engine) : ControlPanel (c), e (engine)
+    {
+        const juce::String x = "e" + juce::String (e + 1) + "_", s = x + "sec_";
+        const int meterBase = e == 0 ? cs::MeterE1Osc1 : cs::MeterE2Osc1;
+
+        title ({ 12, 6, 80, 16 }, "Tune");
+        knob (x + "coarse", "Coarse", { 10, 24, 64, 70 }).setFormatter ([] (float v) { return juce::String ((int) std::lround (v)) + " st"; });
+        toggle (x + "kbd", Toggle::TextPill, "kbd", { 82, 30, 40, 16 }).setTooltip ("Key tracking (off = fixed pitch)");
+        knob (x + "fine", "Fine", { 6, 98, 54, 60 });
+        title ({ 12, 170, 80, 16 }, "Output");
+        knob (x + "vol", "Volume", { 6, 190, 56, 66 });
+        knob (x + "fmix", "F1 / F2", { 66, 190, 56, 66 }).setTooltip ("Filter mix: how much goes to Filter 1 vs Filter 2");
+
+        // Players
+        add<SoundLed> ({ 142, 9, 14, 14 }, ctx, meterBase + 0, "the players");
+        title ({ 158, 8, 80, 16 }, "Players");
+        pill (s + "family", { 232, 5, 96, 18 }).setTooltip ("Strings or Brass");
+        knob (s + "players", "Players", { 138, 26, 58, 68 });
+        knob (s + "into", "Intonation", { 196, 26, 58, 68 });
+        knob (s + "loose", "Looseness", { 254, 26, 58, 68 });
+        auto& size = add<FlatButton> ({ 140, 98, 70, 18 }, "Size...");
+        size.setTooltip ("Solo, chamber, section or full");
+        size.onClick = [this, &size] { showSizes (size); };
+        knob (s + "width", "Width", { 196, 96, 58, 66 });
+        knob (s + "pos", "Position", { 254, 96, 58, 66 });
+        add<SeatingView> ({ 136, 168, 196, 120 }, ctx, e);
+
+        // Dynamics and vibrato
+        title ({ 344, 8, 120, 16 }, "Dynamics");
+        knob (s + "dyn", "Dynamics", { 338, 24, 70, 76 }).setTooltip ("Soft to loud: level, brightness and vibrato together (mod wheel in the presets)");
+        knob (s + "bright", "Brightness", { 410, 26, 58, 68 });
+        add<SoundLed> ({ 474, 9, 14, 14 }, ctx, meterBase + 3, "the bow / breath noise");
+        knob (s + "noise", "Noise", { 468, 26, 58, 68 });
+        title ({ 344, 106, 120, 16 }, "Vibrato");
+        knob (s + "vib_depth", "Depth", { 338, 124, 58, 68 });
+        knob (s + "vib_rate", "Rate", { 396, 124, 58, 68 });
+        knob (s + "vib_delay", "Delay", { 454, 124, 58, 68 }).setFormatter ([] (float v) { return juce::String (v, 2) + " s"; });
+        caption ({ 340, 200, 190, 14 }, "Each player has their own vibrato,");
+        caption ({ 340, 214, 190, 14 }, "speed and tuning around these.");
+
+        // Attack and body
+        title ({ 546, 8, 120, 16 }, "Attack");
+        knob (s + "attack", "Attack", { 538, 26, 58, 68 });
+        biteKnob = &knob (s + "bite", "Bite", { 596, 26, 58, 68 });
+        scoopKnob = &knob (s + "scoop", "Scoop", { 654, 26, 58, 68 });
+        add<SoundLed> ({ 542, 107, 14, 14 }, ctx, meterBase + 1, "the body / bell resonance");
+        title ({ 560, 106, 120, 16 }, "Body");
+        pill (s + "body", { 542, 130, 110, 18 }).setTooltip ("Instrument body or bell: fixed resonances, like the wood of a violin or the bell of a horn");
+        knob (s + "body_mix", "Body Mix", { 654, 118, 58, 68 });
+        caption ({ 540, 200, 230, 14 }, "Vibrato moves the harmonics through the");
+        caption ({ 540, 214, 230, 14 }, "body's fixed peaks: that shimmer is the");
+        caption ({ 540, 228, 230, 14 }, "difference from a plain synth string.");
+        caption ({ 340, 262, 430, 14 }, "Legato (Play Mode: Mono Legato) slurs between notes. Dynamics on the mod wheel, as orchestral libraries do.");
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        g.setColour (col::border);
+        g.drawVerticalLine (132, 6.0f, (float) getHeight() - 6.0f);
+        g.drawHorizontalLine (162, 6.0f, 126.0f);
+        g.drawVerticalLine (334, 6.0f, 250.0f);
+        g.drawVerticalLine (532, 6.0f, 250.0f);
+        g.drawHorizontalLine (100, 338.0f, 528.0f);
+        g.drawHorizontalLine (100, 536.0f, (float) getWidth() - 8.0f);
+        paintCaptions (g);
+    }
+
+    void refreshView() override
+    {
+        ControlPanel::refreshView();
+        const int brass = ctx.intValue ("e" + juce::String (e + 1) + "_sec_family") == cs::SectionBrass ? 1 : 0;
+        if (brass == shownFamily)
+            return;
+        shownFamily = brass;
+        biteKnob->setLabel (brass ? "Blat" : "Bite");
+        scoopKnob->setAlpha (brass ? 1.0f : 0.4f);
+    }
+
+private:
+    int e;
+    Knob* biteKnob = nullptr;
+    Knob* scoopKnob = nullptr;
+    int shownFamily = -1;
+
+    void showSizes (juce::Component& target)
+    {
+        juce::PopupMenu m;
+        m.addItem (1, "Solo (1)");
+        m.addItem (3, "Chamber (3)");
+        m.addItem (6, "Section (6)");
+        m.addItem (8, "Full (8)");
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&target),
+                         [this, safe = juce::Component::SafePointer<SectionView> (this)] (int r) {
+                             if (safe != nullptr && r > 0)
+                                 ctx.setValue ("e" + juce::String (e + 1) + "_sec_players", (float) r);
+                         });
+    }
+};
+
 class UtilityView final : public ControlPanel
 {
 public:
@@ -527,9 +690,11 @@ public:
             analog[e] = std::make_unique<AnalogView> (ctx, e);
             wavetable[e] = std::make_unique<WavetableView> (ctx, e);
             organ[e] = std::make_unique<OrganView> (ctx, e);
+            section[e] = std::make_unique<SectionView> (ctx, e);
             addChildComponent (*analog[e]);
             addChildComponent (*wavetable[e]);
             addChildComponent (*organ[e]);
+            addChildComponent (*section[e]);
             power[e] = std::make_unique<Toggle> (ctx, "e" + juce::String (e + 1) + "_on", Toggle::Power);
             type[e] = std::make_unique<Pill> (ctx, "e" + juce::String (e + 1) + "_type");
             type[e]->textColour = col::text;
@@ -586,6 +751,7 @@ public:
             analog[e]->setBounds (content);
             wavetable[e]->setBounds (content);
             organ[e]->setBounds (content);
+            section[e]->setBounds (content);
         }
         utility->setBounds (content);
     }
@@ -617,9 +783,9 @@ public:
         for (int e = 0; e < 2; ++e)
         {
             const int engineType = ctx.intValue ("e" + juce::String (e + 1) + "_type");
-            ControlPanel* views[3] = { analog[e].get(), wavetable[e].get(), organ[e].get() };
-            const int shown = juce::jlimit (0, 2, engineType);
-            for (int k = 0; k < 3; ++k)
+            ControlPanel* views[4] = { analog[e].get(), wavetable[e].get(), organ[e].get(), section[e].get() };
+            const int shown = juce::jlimit (0, 3, engineType);
+            for (int k = 0; k < 4; ++k)
                 views[k]->setVisible (current == e && k == shown);
             if (current == e)
                 views[shown]->refreshView();
@@ -635,6 +801,7 @@ private:
     std::unique_ptr<AnalogView> analog[2];
     std::unique_ptr<WavetableView> wavetable[2];
     std::unique_ptr<OrganView> organ[2];
+    std::unique_ptr<SectionView> section[2];
     std::unique_ptr<UtilityView> utility;
     std::unique_ptr<Toggle> power[3];
     std::unique_ptr<Pill> type[2];

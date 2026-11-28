@@ -346,6 +346,77 @@ const std::vector<FactoryPreset>& factoryPresets()
               macros (b, "Growl", "Thump", "Drive", "Rotary Mix");
               b.route ("Macro 1", "e1_org_db2", 0.6f).route ("Macro 2", "e1_org_click", 0.2f).route ("Macro 3", "fx_a1_p6", 0.5f).route ("Macro 4", "fx_a1_p8", -0.6f);
           } },
+        // Section engine (v0.6): independent players + body / bell. Mod wheel = Dynamics.
+        { "Section Strings Init", "Strings/Brass", "Starting point for the Section engine: six string players on the Ensemble body. Mod wheel = dynamics.",
+          [] (B& b) {
+              b.set ("master_vol", 0.56f); // level-matched across the factory set
+              ensemble (b, 0, SectionStrings, SectionBodyEnsemble, 6);
+              wheelDynamics (b, 0, 0.55f, 0.45f);
+              sec (b, 0, "attack", 0.35f);
+              env (b, "env1", 0.005f, 1.0f, 1.0f, 0.8f);
+              b.set ("amp_velo", 0.25f);
+              hall (b, 0.35f, 0.8f, 0.7f);
+              macros (b, "Brightness", "Space", "Vibrato", "Attack");
+              b.route ("Macro 1", "e1_sec_bright", 0.4f).route ("Macro 2", "fx_aux_send", 0.5f)
+                  .route ("Macro 3", "e1_sec_vib_depth", 0.5f).route ("Macro 4", "e1_sec_attack", 0.5f);
+          } },
+        { "Section Brass Init", "Strings/Brass", "Starting point for brass on the Section engine: four players through a trumpet bell. Velocity and mod wheel = dynamics.",
+          [] (B& b) {
+              b.set ("master_vol", 0.43f); // level-matched across the factory set
+              ensemble (b, 0, SectionBrass, SectionBodyTrumpet, 4);
+              sec (b, 0, "dyn", 0.5f);
+              b.route ("Velocity", "e1_sec_dyn", 0.35f).route ("Mod Wheel", "e1_sec_dyn", 0.35f);
+              sec (b, 0, "attack", 0.7f);
+              sec (b, 0, "vib_depth", 0.2f);
+              env (b, "env1", 0.003f, 1.0f, 1.0f, 0.3f);
+              b.set ("amp_velo", 0.2f);
+              room (b, 0.2f);
+              macros (b, "Brightness", "Space", "Vibrato", "Scoop");
+              b.route ("Macro 1", "e1_sec_bright", 0.4f).route ("Macro 2", "fx_aux_send", 0.5f)
+                  .route ("Macro 3", "e1_sec_vib_depth", 0.6f).route ("Macro 4", "e1_sec_scoop", 0.5f);
+          } },
+        { "Worship Section Strings", "Strings/Brass", "Soft, warm full strings for worship: violins left, cellos right, slow bow, long tail. Wheel brings them up.",
+          [] (B& b) {
+              b.set ("master_vol", 0.91f); // level-matched across the factory set
+              ensemble (b, 0, SectionStrings, SectionBodyEnsemble, 8, 0.7f);
+              ensemble (b, 1, SectionStrings, SectionBodyCello, 6, 0.55f);
+              b.set ("e2_coarse", -12.0f);
+              sec (b, 0, "pos", -0.3f);
+              sec (b, 1, "pos", 0.35f);
+              for (int e = 0; e < 2; ++e)
+              {
+                  wheelDynamics (b, e, 0.4f, 0.5f);
+                  sec (b, e, "attack", 0.1f);
+                  sec (b, e, "bright", 0.4f);
+                  sec (b, e, "vib_delay", 0.8f);
+              }
+              env (b, "env1", 0.005f, 1.0f, 1.0f, 2.5f);
+              b.set ("amp_velo", 0.1f);
+              hall (b, 0.5f, 0.85f, 0.75f);
+              macros (b, "Brightness", "Space", "Vibrato", "Attack");
+              for (const char* e : { "e1_", "e2_" })
+                  b.route ("Macro 1", juce::String (e) + "sec_bright", 0.4f).route ("Macro 3", juce::String (e) + "sec_vib_depth", 0.5f)
+                      .route ("Macro 4", juce::String (e) + "sec_attack", 0.5f);
+              b.route ("Macro 2", "fx_aux_send", 0.5f);
+          } },
+        { "Worship Section Horns", "Strings/Brass", "A soft bed of French horns under worship: dark, round and wide. Wheel swells them.",
+          [] (B& b) {
+              b.set ("master_vol", 0.95f); // level-matched across the factory set
+              ensemble (b, 0, SectionBrass, SectionBodyHorn, 6, 0.8f);
+              wheelDynamics (b, 0, 0.25f, 0.45f);
+              b.route ("Velocity", "e1_sec_dyn", 0.15f);
+              sec (b, 0, "attack", 0.1f);
+              sec (b, 0, "bright", 0.3f);
+              sec (b, 0, "noise", 0.2f);
+              sec (b, 0, "vib_depth", 0.1f);
+              sec (b, 0, "width", 0.8f);
+              env (b, "env1", 0.005f, 1.0f, 1.0f, 1.2f);
+              b.set ("amp_velo", 0.1f);
+              hall (b, 0.4f, 0.85f, 0.75f);
+              macros (b, "Brightness", "Space", "Vibrato", "Attack");
+              b.route ("Macro 1", "e1_sec_bright", 0.4f).route ("Macro 2", "fx_aux_send", 0.5f)
+                  .route ("Macro 3", "e1_sec_vib_depth", 0.5f).route ("Macro 4", "e1_sec_attack", 0.5f);
+          } },
         { "Pipe Organ", "Keys", "Church pipe organ with a flute rank and a big stone room.",
           [] (B& b) {
               b.set ("master_vol", 0.26f); // level-matched across the factory set
@@ -916,6 +987,10 @@ juce::StringArray factoryPresetTags (const juce::String& presetName)
         { "Tonewheel All Out", "Organ, Tonewheel, Rock" },
         { "Tonewheel Rock", "Organ, Tonewheel, Rock" },
         { "Tonewheel Bass", "Organ, Tonewheel, Bass" },
+        { "Section Strings Init", "Strings, Section Engine" },
+        { "Section Brass Init", "Brass, Section Engine" },
+        { "Worship Section Strings", "Strings, Worship, Section Engine" },
+        { "Worship Section Horns", "Brass, French Horn, Worship, Section Engine" },
         { "Pipe Organ", "Organ, Pipe Organ" },
         { "Glass Keys", "Bells, Synth Keys" },
         { "Worship Pluck", "Pluck, Worship" },

@@ -82,6 +82,22 @@ Instant attack, decay to 40 % sustain.
 Why it cuts through: the narrow square adds bright upper harmonics, and the filter envelope makes every note start bright.
 
 Try: Macro 3 turns the click up or down.)" },
+        { "Section Strings Init", R"(Recipe: the Section engine (Engine 1 type: Section, family Strings). One key is played by six players. Each has their own tuning (Intonation), slow drift, vibrato speed and depth, entry time (Looseness) and seat across the stereo field (Width / Position): the seating diagram on the panel shows where they sit. Their sum goes through the Ensemble body: fixed resonances like the wood of real instruments. Vibrato moving the harmonics through those fixed peaks is the shimmer you hear on long notes.
+
+Dynamics is on the mod wheel (at rest: mezzo-forte). It moves level, brightness and vibrato together, the orchestral-library way.
+
+Try: Players (Size... for Solo / Chamber / Section / Full), the Body menu (Violin, Viola, Cello, Bass), Attack and Bite for marcato, Vibrato Delay. Macros: Brightness, Space, Vibrato, Attack.)" },
+        { "Section Brass Init", R"(Recipe: the Section engine with family Brass: four players through the Trumpet bell. In the Brass family, Dynamics opens each player's tone much faster than it raises the level, and a soft saturator adds upper harmonics, so loud notes bloom bright like real brass. Velocity and the mod wheel both add Dynamics.
+
+Brass attacks: Attack (soft to sforzando: at the top the level overshoots, then drops back), Blat (a short bright burst on loud attacks) and Scoop (each note starts below and rises into pitch in 30-80 ms).
+
+Try: the Body menu (Trumpet, Trombone, Horn, Muted), Players 1 with Play Mode Mono Legato for a solo trumpet (legato notes slur). Macros: Brightness, Space, Vibrato, Scoop.)" },
+        { "Worship Section Strings", R"(Recipe: two Section engines: eight players on the Ensemble body left of centre, six an octave down on the Cello body right of centre. Soft Dynamics (0.4) with the mod wheel bringing them up, a very slow Attack, brightness slightly down, vibrato that only fades in after 0.8 s (so moving chords stay calm), a 2.5 s release and a big hall.
+
+Use: under the band in worship, hymns and prayer. Push the wheel for the last chorus.)" },
+        { "Worship Section Horns", R"(Recipe: six players on the Horn bell (dark and round, like a French horn that faces away from the audience), soft Dynamics, a slow attack and little vibrato, wide seating and a big hall. The mod wheel swells them.
+
+Use: a warm bed under worship, between pad and strings. Layer it with Worship Section Strings in MainStage for a full orchestra.)" },
         { "Tonewheel Init", R"(Recipe: the Organ engine, a model of a tonewheel organ. Each drawbar adds one harmonic of the key you play, made by its own spinning tonewheel: 16' (an octave down), 5 1/3' (a fifth above that), 8' (the note itself), then 4', 2 2/3', 2', 1 3/5', 1 1/3' and 1' going up. Here: 888 000 000, the first three bars full.
 
 The signal then goes through the Organ Scanner (FX A1, mode C3: the organ's own chorus) and the rotary speaker (FX A2). The mod wheel switches the rotary to Fast once it passes half way; let go and it slows down again, the bass drum more slowly than the horn, as on a real cabinet.

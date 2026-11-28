@@ -239,7 +239,9 @@ void TopBar::paint (juce::Graphics& g)
     g.drawRoundedRectangle (bar.reduced (0.5f), 5.0f, 1.0f);
     g.setColour (col::text);
     g.setFont (font (15.0f));
-    g.drawFittedText (name + (modified ? " *" : ""), nameArea, juce::Justification::centred, 1);
+    // Keep the name centred but clear of the category label on the right (long names shrink).
+    const int catW = category.isNotEmpty() ? 94 : 0;
+    g.drawFittedText (name + (modified ? " *" : ""), nameArea.withTrimmedRight (catW).withTrimmedLeft (catW / 3), juce::Justification::centred, 1, 0.75f);
     if (category.isNotEmpty())
     {
         g.setColour (col::textFaint);

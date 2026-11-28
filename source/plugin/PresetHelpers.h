@@ -185,6 +185,31 @@ inline void percussion (B& b, int e, bool third, bool slow, bool soft = false)
     b.set (p + "perc", 1.0f).set (p + "perc_harm", third ? 1.0f : 0.0f).set (p + "perc_decay", slow ? 1.0f : 0.0f).set (p + "perc_vol", soft ? 1.0f : 0.0f);
 }
 
+// --- Section engine (strings / brass) ---------------------------------------------------
+// The Section engine on engine e: family (SectionStrings / SectionBrass), body, players.
+// Filter 1 is switched off (the engine shapes its own tone through Dynamics / Brightness).
+inline void ensemble (B& b, int e, int family, int body, int players, float vol = 0.75f)
+{
+    const juce::String p = "e" + juce::String (e + 1) + "_";
+    b.set (p + "on", 1.0f).set (p + "type", (float) EngineSection).set (p + "vol", vol);
+    b.set (p + "sec_family", (float) family).set (p + "sec_body", (float) body).set (p + "sec_players", (float) players);
+    b.set ("f1_on", 0.0f);
+}
+
+// One Section control on engine e, e.g. sec (b, 0, "dyn", 0.6f).
+inline void sec (B& b, int e, const char* id, float v)
+{
+    b.set ("e" + juce::String (e + 1) + "_sec_" + id, v);
+}
+
+// Dynamics on the mod wheel, the orchestral-library way: base at the wheel's rest,
+// base + range at the top.
+inline void wheelDynamics (B& b, int e, float base, float range)
+{
+    sec (b, e, "dyn", base);
+    b.route ("Mod Wheel", "e" + juce::String (e + 1) + "_sec_dyn", range);
+}
+
 // Organ Scanner (mode 0..5 = V1 V2 V3 C1 C2 C3) then the rotary speaker; the mod
 // wheel switches the rotary to Fast (past half way).
 inline void organFx (B& b, int scannerMode, float drive = 0.2f, int scannerSlot = 0, int rotarySlot = 1)

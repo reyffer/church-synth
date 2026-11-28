@@ -82,6 +82,21 @@ std::vector<ModDest> build()
         add (o + "leak", on + "Leakage", 0, 1, false, [e] (SynthParams& s) -> float& { return s.engine[e].org.leakage; });
         add (o + "click", on + "Key Click", 0, 1, false, [e] (SynthParams& s) -> float& { return s.engine[e].org.click; });
         add (o + "click_tone", on + "Click Tone", 0, 1, false, [e] (SynthParams& s) -> float& { return s.engine[e].org.clickTone; });
+
+        const std::string sc = p + "sec_", sn = n + "Section ";
+        add (sc + "dyn", sn + "Dynamics", 0, 1, false, [e] (SynthParams& s) -> float& { return s.engine[e].sec.dynamics; });
+        add (sc + "vib_depth", sn + "Vibrato Depth", 0, 1, false, [e] (SynthParams& s) -> float& { return s.engine[e].sec.vibDepth; });
+        add (sc + "vib_rate", sn + "Vibrato Rate", 0, 1, false, [e] (SynthParams& s) -> float& { return s.engine[e].sec.vibRate; });
+        add (sc + "into", sn + "Intonation", 0, 1, false, [e] (SynthParams& s) -> float& { return s.engine[e].sec.intonation; });
+        add (sc + "loose", sn + "Looseness", 0, 1, false, [e] (SynthParams& s) -> float& { return s.engine[e].sec.looseness; });
+        add (sc + "noise", sn + "Noise", 0, 1, false, [e] (SynthParams& s) -> float& { return s.engine[e].sec.noise; });
+        add (sc + "bright", sn + "Brightness", 0, 1, false, [e] (SynthParams& s) -> float& { return s.engine[e].sec.brightness; });
+        add (sc + "body_mix", sn + "Body Mix", 0, 1, false, [e] (SynthParams& s) -> float& { return s.engine[e].sec.bodyMix; });
+        add (sc + "width", sn + "Width", 0, 1, false, [e] (SynthParams& s) -> float& { return s.engine[e].sec.width; });
+        add (sc + "attack", sn + "Attack", 0, 1, false, [e] (SynthParams& s) -> float& { return s.engine[e].sec.attack; });
+        add (sc + "bite", sn + "Bite / Blat", 0, 1, false, [e] (SynthParams& s) -> float& { return s.engine[e].sec.bite; });
+        add (sc + "scoop", sn + "Scoop", 0, 1, false, [e] (SynthParams& s) -> float& { return s.engine[e].sec.scoop; });
+        add (sc + "pos", sn + "Position", -1, 1, false, [e] (SynthParams& s) -> float& { return s.engine[e].sec.position; });
     }
 
     for (size_t k = 0; k < 2; ++k)

@@ -4,6 +4,14 @@
 #include <cmath>
 #include <cstdint>
 
+// Keeps rarely used, block-rate code (newer engine types) out of the hot voice loop, so
+// adding them doesn't change how the compiler lays out the existing engines.
+#if defined(_MSC_VER)
+ #define CS_NOINLINE __declspec(noinline)
+#else
+ #define CS_NOINLINE __attribute__ ((noinline))
+#endif
+
 namespace cs
 {
 constexpr float kPi = 3.14159265358979323846f;

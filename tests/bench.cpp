@@ -117,6 +117,8 @@ int main (int argc, char** argv)
         allFxSlots (chord8),
         arpWithFx ({ 48, 55, 60, 64 }),
         { "organ_8voices", patches::organ(), chord8 },
+        { "section_strings_8voices", patches::section(), chord8 },
+        { "section_brass_8voices", patches::section (true), chord8 },
         { "organ_all_out_16voices", patches::organ (true),
           { 36, 43, 48, 52, 55, 59, 60, 62, 64, 67, 69, 71, 72, 74, 76, 79 } },
     };

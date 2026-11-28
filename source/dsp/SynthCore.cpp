@@ -391,7 +391,7 @@ void SynthCore::updateSeqState() noexcept
     chordArp = false;
     if (on && params.seq.mode == SeqModeArp)
         for (const auto& e : params.engine)
-            if (e.on && e.type != EngineOrgan && e.unisonOn && e.unisonMode == UnisonChord)
+            if (e.on && e.type < EngineOrgan && e.unisonOn && e.unisonMode == UnisonChord)
             {
                 int iv[kMaxUnison];
                 const int count = unison::chordIntervals (e, iv);

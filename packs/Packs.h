@@ -60,6 +60,12 @@ juce::String pack14Notes (const juce::String& presetName);
 const std::vector<FactoryPreset>& pack15Presets();
 juce::StringArray pack15Tags (const juce::String& presetName);
 juce::String pack15Notes (const juce::String& presetName);
+const std::vector<FactoryPreset>& pack4IIPresets();
+juce::StringArray pack4IITags (const juce::String& presetName);
+juce::String pack4IINotes (const juce::String& presetName);
+const std::vector<FactoryPreset>& pack5IIPresets();
+juce::StringArray pack5IITags (const juce::String& presetName);
+juce::String pack5IINotes (const juce::String& presetName);
 
 inline const std::vector<PresetPack>& presetPacks()
 {
@@ -79,6 +85,9 @@ inline const std::vector<PresetPack>& presetPacks()
         { "Pack 13 - Famous Sounds", &pack13Presets, &pack13Tags, &pack13Notes },
         { "Pack 14 - Special FX", &pack14Presets, &pack14Tags, &pack14Notes },
         { "Pack 15 - Acoustic Pianos", &pack15Presets, &pack15Tags, &pack15Notes },
+        // Packs 4 and 5 rebuilt on the Section engine (v0.6); the originals stay as they are.
+        { "Pack 4 II - Orchestral Strings (Section engine)", &pack4IIPresets, &pack4IITags, &pack4IINotes },
+        { "Pack 5 II - Brass (Section engine)", &pack5IIPresets, &pack5IITags, &pack5IINotes },
     };
     return packs;
 }

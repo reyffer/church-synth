@@ -53,6 +53,13 @@ static void snapshotEditor (ChurchSynthProcessor& p, const juce::File& dir)
         setReal ("e2_org_db4", 6.0f);
         ed->showView (0, 1, 1);
         shot ("synth_organ");
+        setReal ("e2_type", (float) cs::EngineSection);
+        setReal ("e2_sec_family", 1.0f);
+        ed->showView (0, 1, 1);
+        shot ("synth_section_brass");
+        setReal ("e2_sec_family", 0.0f);
+        ed->showView (0, 1, 1);
+        shot ("synth_section_strings");
         setReal ("e2_type", oldType);
         setReal ("e2_org_perc", 0.0f);
         setReal ("e2_org_db4", 0.0f);
@@ -1066,24 +1073,25 @@ int main (int argc, char** argv)
         // their type, and presets from before it (no organ controls) get organ defaults.
         {
             auto fail = [&] (const char* what) { std::printf ("FAIL: %s\n", what); ++failures; };
-            for (int type : { cs::EngineAnalog, cs::EngineWavetable, cs::EngineOrgan })
+            for (int type : { cs::EngineAnalog, cs::EngineWavetable, cs::EngineOrgan, cs::EngineSection })
             {
                 PresetBuilder b;
-                b.set ("e1_type", (float) type).set ("e2_on", 1.0f).set ("e2_type", (float) (2 - type));
+                b.set ("e1_type", (float) type).set ("e2_on", 1.0f).set ("e2_type", (float) (3 - type));
                 auto t = b.build ("zz type", "Keys");
                 // Round trip through XML, as a .csp file or a MainStage concert would.
                 auto xml = t.createXml();
                 auto back = juce::ValueTree::fromXml (*xml);
-                if (type != cs::EngineOrgan) // a v0.4 preset has no organ controls at all
+                if (type < cs::EngineOrgan) // a v0.4 preset has no organ / section controls at all
                     for (int i = back.getNumChildren(); --i >= 0;)
-                        if (back.getChild (i)["id"].toString().contains ("_org_"))
+                        if (back.getChild (i)["id"].toString().contains ("_org_") || back.getChild (i)["id"].toString().contains ("_sec_"))
                             back.removeChild (i, nullptr);
                 p.restoreStateTree (back, ChurchSynthProcessor::LoadKind::Preset);
                 if (std::lround (p.apvts.getRawParameterValue ("e1_type")->load()) != type
-                    || std::lround (p.apvts.getRawParameterValue ("e2_type")->load()) != 2 - type)
+                    || std::lround (p.apvts.getRawParameterValue ("e2_type")->load()) != 3 - type)
                     fail ("engine type survives save / load");
-                if (type != cs::EngineOrgan && std::abs (p.apvts.getRawParameterValue ("e1_org_db1")->load() - 8.0f) > 1e-4f)
-                    fail ("old preset gets the organ defaults");
+                if (type < cs::EngineOrgan && (std::abs (p.apvts.getRawParameterValue ("e1_org_db1")->load() - 8.0f) > 1e-4f
+                                               || std::abs (p.apvts.getRawParameterValue ("e1_sec_players")->load() - 6.0f) > 1e-4f))
+                    fail ("old preset gets the organ / section defaults");
             }
             // Every factory preset keeps its engine types after a save / load.
             for (const auto& fp : factoryPresets())

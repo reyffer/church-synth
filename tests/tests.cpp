@@ -2191,6 +2191,186 @@ static void testOrganScanner()
     CHECK (std::get<2> (c3) > std::get<2> (v3) + 3.0f, "scanner: chorus modes beat against the dry");
 }
 
+// --- Section engine (Milestone 9) --------------------------------------------------------
+static void renderStereo (SynthCore& s, int frames, std::vector<float>& l, std::vector<float>& r)
+{
+    l.assign ((size_t) frames, 0.0f);
+    r.assign ((size_t) frames, 0.0f);
+    for (int pos = 0; pos < frames; pos += 128)
+        s.render (l.data() + pos, r.data() + pos, std::min (128, frames - pos));
+}
+
+// Power-weighted spectral centroid (Hz) of x.
+static float centroid (const std::vector<float>& x, float sr)
+{
+    double num = 0.0, den = 0.0;
+    const size_t n = std::min<size_t> (x.size(), 4096);
+    for (int k = 1; k < 512; ++k) // bins of 46.9 Hz up to 24 kHz
+    {
+        const double f = (double) k * sr / 1024.0;
+        double re = 0.0, im = 0.0;
+        for (size_t i = 0; i < n; ++i)
+        {
+            const double ph = kTwoPiD * f * (double) i / sr;
+            re += x[i] * std::cos (ph);
+            im += x[i] * std::sin (ph);
+        }
+        const double m = re * re + im * im; // power-weighted: faint high bins don't dominate
+        num += m * f;
+        den += m;
+    }
+    return (float) (num / std::max (den, 1e-12));
+}
+
+static void testSectionEngine()
+{
+    constexpr float sr = 48000.0f;
+    auto make = [&] (bool brass) {
+        auto s = std::make_unique<SynthCore>();
+        s->setSampleRate (sr);
+        s->params = patches::section (brass);
+        return s;
+    };
+    auto rmsOf = [] (const std::vector<float>& x) {
+        double e = 0.0;
+        for (float v : x) e += (double) v * v;
+        return (float) std::sqrt (e / (double) std::max<size_t> (1, x.size()));
+    };
+    // Dynamics: louder AND brighter; brass brightens much more than strings.
+    float bright[2][2] {}, lvl[2][2] {};
+    for (int fam = 0; fam < 2; ++fam)
+        for (int k = 0; k < 2; ++k)
+        {
+            auto s = make (fam == 1);
+            s->params.engine[0].sec.dynamics = k == 0 ? 0.2f : 1.0f;
+            s->params.engine[0].sec.noise = 0.0f;
+            s->noteOn (60, 0.8f);
+            std::vector<float> l, r;
+            renderStereo (*s, 24000, l, r);
+            std::vector<float> m (l.begin() + 12000, l.end());
+            bright[fam][k] = centroid (m, sr);
+            lvl[fam][k] = rmsOf (m);
+        }
+    std::printf ("section: strings centroid %.0f -> %.0f Hz, brass %.0f -> %.0f Hz\n", bright[0][0], bright[0][1], bright[1][0], bright[1][1]);
+    CHECK (lvl[0][1] > 3.0f * lvl[0][0] && lvl[1][1] > 3.0f * lvl[1][0], "section: Dynamics raises the level");
+    CHECK (bright[0][1] > 1.5f * bright[0][0], "section: louder strings are brighter");
+    CHECK (bright[1][1] / bright[1][0] > bright[0][1] / bright[0][0], "section: brass brightens faster than strings");
+    CHECK (bright[1][1] > bright[0][1] && bright[1][0] < bright[0][0], "section: brass is darker than strings when soft, brighter when loud");
+
+    // Seating: several players are spread across the stereo field; Width 0 = mono.
+    {
+        float corr[2] {};
+        for (int k = 0; k < 2; ++k)
+        {
+            auto s = make (false);
+            s->params.engine[0].sec.width = k == 0 ? 0.0f : 1.0f;
+            s->noteOn (60, 0.8f);
+            std::vector<float> l, r;
+            renderStereo (*s, 24000, l, r);
+            double lr = 0, ll = 0, rr = 0;
+            for (size_t i = 6000; i < l.size(); ++i) { lr += (double) l[i] * r[i]; ll += (double) l[i] * l[i]; rr += (double) r[i] * r[i]; }
+            corr[k] = (float) (lr / std::sqrt (ll * rr + 1e-20));
+        }
+        CHECK (corr[0] > 0.999f, "section: Width 0 is mono");
+        CHECK (corr[1] < 0.9f, "section: players are seated across the stereo field");
+    }
+    // Intonation: players out of tune beat against each other; at 0 (and no vibrato) they don't.
+    {
+        float move[2] {};
+        for (int k = 0; k < 2; ++k)
+        {
+            auto s = make (false);
+            auto& sp = s->params.engine[0].sec;
+            sp.intonation = k == 0 ? 0.0f : 1.0f;
+            sp.vibDepth = 0.0f;
+            sp.noise = 0.0f;
+            sp.width = 0.0f;
+            sp.bodyMix = 0.0f;
+            s->noteOn (60, 0.8f);
+            std::vector<float> l, r;
+            renderStereo (*s, 96000, l, r);
+            float lo = 1e9f, hi = 0.0f;
+            for (size_t w = 24000; w + 2400 <= l.size(); w += 2400)
+            {
+                std::vector<float> seg (l.begin() + (long) w, l.begin() + (long) w + 2400);
+                const float e = rmsOf (seg);
+                lo = std::min (lo, e);
+                hi = std::max (hi, e);
+            }
+            move[k] = 20.0f * std::log10 (hi / lo);
+        }
+        CHECK (move[0] < 0.5f && move[1] > 1.0f, "section: Intonation makes the players beat");
+    }
+    // Player budget: 64 player oscillators per instance -> with 16 voices, at most 4 players.
+    {
+        std::vector<float> l8, r8, l4, r4;
+        auto a = make (false), b = make (false);
+        a->params.maxVoices = b->params.maxVoices = 16;
+        a->params.engine[0].sec.players = 8.0f;
+        b->params.engine[0].sec.players = 4.0f;
+        a->noteOn (60, 0.8f);
+        b->noteOn (60, 0.8f);
+        renderStereo (*a, 9600, l8, r8);
+        renderStereo (*b, 9600, l4, r4);
+        CHECK (l8 == l4, "section: 16 voices cap the players at 4");
+    }
+    // Body: switching the body in or out keeps the level within a few dB.
+    {
+        float e[2] {};
+        for (int k = 0; k < 2; ++k)
+        {
+            auto s = make (false);
+            s->params.engine[0].sec.bodyMix = (float) k;
+            for (int n : { 48, 55, 60, 64 })
+                s->noteOn (n, 0.8f);
+            std::vector<float> l, r;
+            renderStereo (*s, 48000, l, r);
+            e[k] = rmsOf (std::vector<float> (l.begin() + 24000, l.end()));
+        }
+        CHECK (std::abs (20.0f * std::log10 (e[1] / e[0])) < 4.0f, "section: body is level-normalised");
+    }
+    // Stability: every family / body / extreme control, bend and glide: finite and bounded.
+    for (int body = 0; body < SectionBodyCount; ++body)
+    {
+        auto s = make (body >= SectionBodyTrumpet);
+        auto& sp = s->params.engine[0].sec;
+        sp.body = body;
+        sp.players = 8.0f;
+        sp.dynamics = 1.0f;
+        sp.brightness = 1.0f;
+        sp.bite = 1.0f;
+        sp.scoop = 1.0f;
+        sp.attack = 1.0f;
+        sp.noise = 1.0f;
+        sp.intonation = 1.0f;
+        sp.vibDepth = 1.0f;
+        sp.bodyMix = 1.0f;
+        s->params.glide = 0.2f;
+        for (int n : { 0, 24, 48, 60, 72, 96, 120, 127 })
+            s->noteOn (n, 1.0f);
+        s->setPitchBend (-1.0f);
+        const auto st = renderStats (*s, 24000);
+        if (! (st.finite && st.peak <= 1.0f && std::abs (st.dc) < 0.02f))
+            std::printf ("  body %d: finite %d peak %.3f dc %.4f\n", body, (int) st.finite, st.peak, st.dc);
+        CHECK (st.finite && st.peak <= 1.0f && std::abs (st.dc) < 0.02f, "section: extreme settings stay finite and bounded");
+    }
+    // Other engines untouched by Section settings.
+    {
+        auto a = std::make_unique<SynthCore>(), b = std::make_unique<SynthCore>();
+        for (auto* t : { a.get(), b.get() })
+        {
+            t->setSampleRate (sr);
+            t->params = patches::pad();
+        }
+        b->params.engine[0].sec.players = 1.0f;
+        b->params.engine[0].sec.family = SectionBrass;
+        for (auto* t : { a.get(), b.get() })
+            t->noteOn (60, 0.8f);
+        const auto xa = renderMono (*a, 4800), xb = renderMono (*b, 4800);
+        CHECK (xa == xb, "section settings don't touch an analog patch");
+    }
+}
+
 int main()
 {
     testDriveAddsHarmonics();
@@ -2252,6 +2432,7 @@ int main()
     testHeavyPatchSane();
     testOrganEngine();
     testOrganScanner();
+    testSectionEngine();
     if (failures == 0)
         std::printf ("All tests passed.\n");
     return failures == 0 ? 0 : 1;

@@ -22,7 +22,7 @@ enum Wave : int { WaveSine = 0, WaveTriangle, WaveSaw, WaveRamp, WaveSquare, Wav
 enum UnisonMode : int { UnisonClassic = 0, UnisonChord, UnisonSuper, UnisonModeCount };
 
 // Engine types. Order is stored in presets: append only (Section, Modelled planned, SPEC §3.5).
-enum EngineType : int { EngineAnalog = 0, EngineWavetable, EngineOrgan, EngineTypeCount };
+enum EngineType : int { EngineAnalog = 0, EngineWavetable, EngineOrgan, EngineSection, EngineTypeCount };
 
 enum WtFmType : int { FmLinear = 0, FmExponential, FmRing, FmTypeCount };
 enum WtRetrig : int { RetrigKey = 0, RetrigRandom, RetrigFree, RetrigModOsc, RetrigCount };
@@ -157,6 +157,34 @@ struct OrganParams
     bool percCut1 = true;    // percussion on mutes the 1' drawbar (as on the original)
 };
 
+// Section engine (ensemble strings / brass), SPEC §3.5. Menus append only.
+enum SectionFamily : int { SectionStrings = 0, SectionBrass, SectionFamilyCount };
+enum SectionBody : int
+{
+    SectionBodyViolin = 0, SectionBodyViola, SectionBodyCello, SectionBodyBass, SectionBodyEnsemble,
+    SectionBodyTrumpet, SectionBodyTrombone, SectionBodyHorn, SectionBodyMuted, SectionBodyCount
+};
+struct SectionParams
+{
+    int family = SectionStrings;
+    float players = 6.0f;     // 1..8 per note
+    float intonation = 0.35f; // 0..1: tuning spread up to 15 cents + slow drift
+    float looseness = 0.35f;  // 0..1: entries spread over up to 40 ms
+    float width = 0.7f;       // 0..1 seating width
+    float position = 0.0f;    // -1..1 centre of the seating
+    float dynamics = 0.7f;    // 0..1: level, brightness and vibrato together
+    float brightness = 0.5f;  // 0..1 (0.5 = neutral)
+    float noise = 0.3f;       // bow / breath
+    float vibDepth = 0.5f;
+    float vibRate = 0.5f;     // 0..1 -> 4..7 Hz
+    float vibDelay = 0.35f;   // seconds before the vibrato has faded in
+    float attack = 0.4f;      // soft .. marcato / sforzando
+    float bite = 0.3f;        // strings: Bite; brass: Blat
+    float scoop = 0.3f;       // brass only
+    int body = SectionBodyEnsemble;
+    float bodyMix = 0.7f;
+};
+
 struct EngineParams
 {
     bool on = true;
@@ -187,6 +215,7 @@ struct EngineParams
 
     WavetableParams wt {};
     OrganParams org {};
+    SectionParams sec {};
 };
 
 struct NoiseParams

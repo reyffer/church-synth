@@ -149,7 +149,7 @@ public:
     // Renders n samples (n <= kBlock) and ADDS them to outL/outR. modOut receives the
     // mono output before the engine Volume (cross-mod / filter FM source).
     // meter (optional): [0] tonewheels, [1] percussion, [3] key click.
-    void render (const EngineParams& p, float notePitch, float fixedPitch, int n, float* outL, float* outR,
+    CS_NOINLINE void render (const EngineParams& p, float notePitch, float fixedPitch, int n, float* outL, float* outR,
                  float* modOut, float* meter, const OrganContext& ctx) noexcept
     {
         if (! p.on)

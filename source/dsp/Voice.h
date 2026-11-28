@@ -2,6 +2,7 @@
 
 #include "AnalogEngine.h"
 #include "OrganEngine.h"
+#include "SectionEngine.h"
 #include "UtilityEngine.h"
 #include "WavetableEngine.h"
 #include "MultiFilter.h"
@@ -43,6 +44,7 @@ public:
             analog[e].setSampleRate (sr);
             wavetable[e].setSampleRate (sr);
             organ[e].setSampleRate (sr);
+            section[e].setSampleRate (sr);
         }
         utility.setSampleRate (sr);
         env2.setSampleRate (sr);
@@ -118,8 +120,12 @@ public:
         if (retriggerEnv)
         {
             for (int e = 0; e < kNumEngines; ++e)
+            {
                 if (p.engine[(size_t) e].type == EngineOrgan)
                     organ[e].retrigger();
+                else if (p.engine[(size_t) e].type == EngineSection)
+                    section[e].restrike();
+            }
             env.gateOn();
             if (p.env2Retrig == EnvRetrigPolyKbd) env2.gateOn();
             if (p.env3Retrig == EnvRetrigPolyKbd) env3.gateOn();
@@ -127,6 +133,9 @@ public:
         }
         else
         {
+            for (int e = 0; e < kNumEngines; ++e)
+                if (p.engine[(size_t) e].type == EngineSection)
+                    section[e].slur();
             if (p.env2Retrig == EnvRetrigLegatoKbd) env2.gateOn();
             if (p.env3Retrig == EnvRetrigLegatoKbd) env3.gateOn();
         }
@@ -230,7 +239,7 @@ public:
     static bool hasChordEngine (const SynthParams& p) noexcept
     {
         for (const auto& e : p.engine)
-            if (e.on && e.type != EngineOrgan && e.unisonOn && e.unisonMode == UnisonChord)
+            if (e.on && e.type < EngineOrgan && e.unisonOn && e.unisonMode == UnisonChord)
                 return true;
         return false;
     }
@@ -296,6 +305,8 @@ private:
                 }
                 organ[e].render (ep, notePitch, fixedPitch, n, eL, eR, modBuf[e], em, oc);
             }
+            else if (ep.type == EngineSection)
+                section[e].render (ep, notePitch, fixedPitch, n, p.maxVoices, eL, eR, modBuf[e], em);
             else
                 analog[e].render (ep, notePitch, fixedPitch, n, eL, eR, ext, modBuf[e], em);
             if (metering)
@@ -715,7 +726,6 @@ private:
 
     AnalogEngine analog[kNumEngines];
     WavetableEngine wavetable[kNumEngines];
-    OrganEngine organ[kNumEngines];
     UtilityEngine utility;
     const GlobalMod* gm = nullptr;
     int lastType[kNumEngines] { EngineAnalog, EngineAnalog };
@@ -729,6 +739,8 @@ private:
             wavetable[e].startNote (ep, seed);
         else if (ep.type == EngineOrgan)
             organ[e].startNote (ep, seed);
+        else if (ep.type == EngineSection)
+            section[e].startNote (ep, seed);
         else
             analog[e].startNote (ep, seed);
     }
@@ -762,5 +774,10 @@ private:
     {
         return std::clamp (p.filter[(size_t) f].cutoff, 16.0f, 22000.0f);
     }
+
+    // The newer engine types sit after everything else, so patches that don't use them
+    // keep the voice's hot state packed together as before (v0.5 / v0.6 bench gate).
+    OrganEngine organ[kNumEngines];
+    SectionEngine section[kNumEngines];
 };
 } // namespace cs

@@ -25,7 +25,7 @@ const juce::StringArray kFilterTypes { "Classic", "Cluster", "Phaser", "Formant"
 const juce::StringArray kFilterFmSources { "Engine 1", "Engine 2", "Utility", "Noise" };
 const juce::StringArray kFilterOutputs { "Sum", "Split (F1>FX A, F2>FX B)", "Split Reversed (F1>FX B, F2>FX A)" };
 const juce::StringArray kVoicing { "Mono", "Mono Legato", "Poly Reassign", "Poly Rotate" };
-const juce::StringArray kEngineTypes { "Analog", "Wavetable", "Organ" }; // append only
+const juce::StringArray kEngineTypes { "Analog", "Wavetable", "Organ", "Section" }; // append only
 const juce::StringArray kFmTypes { "Linear FM", "Exponential FM", "Ring Mod" };
 const juce::StringArray kRetrig { "Key", "Random", "Free", "Mod Osc" };
 const juce::StringArray kPdShapes { "Pulse Width", "Skew", "Mirror", "Sync", "Steps", "Bend", "Squeeze" };
@@ -487,6 +487,36 @@ void addOrgan (Builder& b, size_t e)
     b.boolean (p + "perc_cut", n + "Percussion Mutes 1'", true, [e] (SynthParams& s, float v) { s.engine[e].org.percCut1 = asBool (v); });
 }
 
+// Milestone 9: the Section engine type (appended after the organ; IDs are permanent).
+void addSection (Builder& b, size_t e)
+{
+    const int num = (int) e + 1;
+    const juce::String p = "e" + juce::String (num) + "_sec_";
+    const juce::String n = "Eng" + juce::String (num) + " Section ";
+    b.group = "Engine " + juce::String (num) + " Section";
+    const cs::SectionParams d;
+    b.choice (p + "family", n + "Family", juce::StringArray { "Strings", "Brass" }, 0,
+              [e] (SynthParams& s, float v) { s.engine[e].sec.family = asInt (v); });
+    b.integer (p + "players", n + "Players", 1, 8, 6, [e] (SynthParams& s, float v) { s.engine[e].sec.players = v; });
+    b.flt (p + "into", n + "Intonation", 0, 1, d.intonation, [e] (SynthParams& s, float v) { s.engine[e].sec.intonation = v; });
+    b.flt (p + "loose", n + "Looseness", 0, 1, d.looseness, [e] (SynthParams& s, float v) { s.engine[e].sec.looseness = v; });
+    b.flt (p + "width", n + "Width", 0, 1, d.width, [e] (SynthParams& s, float v) { s.engine[e].sec.width = v; });
+    b.flt (p + "pos", n + "Position", -1, 1, d.position, [e] (SynthParams& s, float v) { s.engine[e].sec.position = v; });
+    b.flt (p + "dyn", n + "Dynamics", 0, 1, d.dynamics, [e] (SynthParams& s, float v) { s.engine[e].sec.dynamics = v; });
+    b.flt (p + "bright", n + "Brightness", 0, 1, d.brightness, [e] (SynthParams& s, float v) { s.engine[e].sec.brightness = v; });
+    b.flt (p + "noise", n + "Noise", 0, 1, d.noise, [e] (SynthParams& s, float v) { s.engine[e].sec.noise = v; });
+    b.flt (p + "vib_depth", n + "Vibrato Depth", 0, 1, d.vibDepth, [e] (SynthParams& s, float v) { s.engine[e].sec.vibDepth = v; });
+    b.flt (p + "vib_rate", n + "Vibrato Rate", 0, 1, d.vibRate, [e] (SynthParams& s, float v) { s.engine[e].sec.vibRate = v; });
+    b.flt (p + "vib_delay", n + "Vibrato Delay", 0, 2, d.vibDelay, [e] (SynthParams& s, float v) { s.engine[e].sec.vibDelay = v; }, "s", 0.4f);
+    b.flt (p + "attack", n + "Attack", 0, 1, d.attack, [e] (SynthParams& s, float v) { s.engine[e].sec.attack = v; });
+    b.flt (p + "bite", n + "Bite / Blat", 0, 1, d.bite, [e] (SynthParams& s, float v) { s.engine[e].sec.bite = v; });
+    b.flt (p + "scoop", n + "Scoop", 0, 1, d.scoop, [e] (SynthParams& s, float v) { s.engine[e].sec.scoop = v; });
+    b.choice (p + "body", n + "Body",
+              juce::StringArray { "Violin", "Viola", "Cello", "Bass", "Ensemble", "Trumpet", "Trombone", "Horn", "Muted" }, // append only
+              cs::SectionBodyEnsemble, [e] (SynthParams& s, float v) { s.engine[e].sec.body = asInt (v); });
+    b.flt (p + "body_mix", n + "Body Mix", 0, 1, d.bodyMix, [e] (SynthParams& s, float v) { s.engine[e].sec.bodyMix = v; });
+}
+
 std::vector<ParamDef> build()
 {
     Builder b;
@@ -541,6 +571,8 @@ std::vector<ParamDef> build()
 
     addOrgan (b, 0);
     addOrgan (b, 1);
+    addSection (b, 0);
+    addSection (b, 1);
 
     return b.defs;
 }
