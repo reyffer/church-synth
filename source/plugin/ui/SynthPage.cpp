@@ -1,4 +1,5 @@
 #include "SynthPage.h"
+#include "dsp/fx/Effects.h"
 
 namespace ui
 {
@@ -317,6 +318,109 @@ private:
     }
 };
 
+// Rotary lamp (Organ panel): the speed of the first Rotary effect in the FX rack, live
+// (so the mod wheel or a MIDI-learned button can be seen switching it). Click = switch.
+class RotaryLamp final : public juce::Component, public juce::SettableTooltipClient, private juce::Timer
+{
+public:
+    explicit RotaryLamp (UiContext& c) : ctx (c)
+    {
+        setMouseCursor (juce::MouseCursor::PointingHandCursor);
+        startTimerHz (15);
+        update();
+    }
+    void paint (juce::Graphics& g) override
+    {
+        update();
+        auto r = getLocalBounds().toFloat();
+        const auto lampR = juce::Rectangle<float> (4.0f, 4.0f, 16.0f, 16.0f);
+        const juce::Colour fastCol (0xffff7a3d), slowCol (0xff5fd38a);
+        if (slot < 0)
+        {
+            g.setColour (col::border);
+            g.drawEllipse (lampR, 1.2f);
+            g.setColour (col::textDim);
+            g.setFont (font (11.0f, true));
+            g.drawText ("Rotary: not in the FX", r.withTrimmedLeft (26.0f).removeFromTop (24.0f), juce::Justification::centredLeft);
+            g.setFont (font (10.0f));
+            g.drawFittedText ("Add a Rotary on the FX page", r.withTrimmedTop (24.0f).toNearestInt(), juce::Justification::centredLeft, 1);
+            return;
+        }
+        const auto c = state == 2 ? col::textDim : state == 1 ? fastCol : slowCol;
+        if (state == 1)
+        {
+            g.setColour (c.withAlpha (0.25f));
+            g.fillEllipse (lampR.expanded (4.0f));
+        }
+        g.setColour (state == 2 ? col::panelLo : c);
+        g.fillEllipse (lampR);
+        g.setColour (c.brighter (0.3f));
+        g.drawEllipse (lampR, 1.2f);
+        g.setColour (state == 2 ? col::textDim : col::text);
+        g.setFont (font (12.0f, true));
+        g.drawText (juce::String ("Rotary: ") + (state == 2 ? "Stopped" : state == 1 ? "Fast" : "Slow"),
+                    r.withTrimmedLeft (26.0f).removeFromTop (24.0f), juce::Justification::centredLeft);
+        g.setColour (col::textDim);
+        g.setFont (font (10.0f));
+        g.drawFittedText (wheelRouted ? "Mod wheel past half = Fast" : "Click to switch", r.withTrimmedTop (24.0f).toNearestInt(),
+                          juce::Justification::centredLeft, 1, 0.8f);
+    }
+    void mouseDown (const juce::MouseEvent& e) override
+    {
+        if (slot < 0 || e.mods.isPopupMenu())
+            return;
+        const auto id = speedId();
+        ctx.setValue (id, ctx.value (id) >= 0.5f ? 0.0f : 1.0f);
+        ctx.proc.checkpoint ("Rotary speed");
+        if (update())
+            repaint();
+    }
+
+private:
+    UiContext& ctx;
+    int slot = -1, shownSlot = -2, state = -1;
+    bool wheelRouted = false;
+
+    static const char* slotId (int s)
+    {
+        static const char* const ids[9] = { "a1", "a2", "a3", "b1", "b2", "b3", "x1", "x2", "x3" };
+        return ids[s];
+    }
+    juce::String speedId() const { return juce::String ("fx_") + slotId (slot) + "_p1"; }
+    void timerCallback() override
+    {
+        if (visibleInEditor (*this) && update())
+            repaint();
+    }
+    bool update() // true when what's shown changed
+    {
+        int s = -1;
+        for (int i = 0; i < 9 && s < 0; ++i)
+            if (ctx.intValue (juce::String ("fx_") + slotId (i) + "_type") == cs::fx::FxRotary)
+                s = i;
+        int st = -1;
+        bool wr = false;
+        if (s >= 0)
+        {
+            slot = s;
+            const bool brake = ctx.modulatedValue (juce::String ("fx_") + slotId (s) + "_p9") >= 0.5f;
+            st = brake ? 2 : ctx.modulatedValue (speedId()) >= 0.5f ? 1 : 0;
+            const int d = cs::findModDest (speedId().toStdString());
+            wr = d >= 0 && ctx.hasRoute (cs::SrcModWheel, d);
+        }
+        const bool changed = s != shownSlot || st != state || wr != wheelRouted;
+        slot = shownSlot = s;
+        state = st;
+        wheelRouted = wr;
+        if (changed)
+            setTooltip (slot < 0 ? "No Rotary effect in the FX rack"
+                                 : "The Rotary effect's speed, live. Click to switch Slow/Fast. "
+                                   "With the mod wheel connected (the organ presets), past halfway is Fast. "
+                                   "For a button or footswitch: FX page, right-click Speed > MIDI learn");
+        return changed;
+    }
+};
+
 // Organ (tonewheel) engine: drawbars in the middle, wheels / click / percussion on the right.
 class OrganView final : public ControlPanel
 {
@@ -332,10 +436,9 @@ public:
         toggle (x + "kbd", Toggle::TextPill, "kbd", { 82, 30, 40, 16 }).setTooltip ("Key tracking (off = fixed pitch)");
         knob (x + "fine", "Fine", { 6, 98, 54, 60 });
         title ({ 12, 170, 80, 16 }, "Output");
-        knob (x + "vol", "Volume", { 6, 190, 56, 66 });
+        knob (x + "vol", "Volume", { 6, 190, 56, 66 }).setTooltip ("Organ volume. The swell pedal is Expression (CC11), via Amp Mod in the presets");
         knob (x + "fmix", "F1 / F2", { 66, 190, 56, 66 }).setTooltip ("Filter mix: how much goes to Filter 1 vs Filter 2");
-        caption ({ 6, 262, 120, 14 }, "Swell: Expression (CC11)");
-        caption ({ 6, 276, 120, 14 }, "via Amp Mod in the presets");
+        add<RotaryLamp> ({ 4, 262, 126, 40 }, ctx);
 
         // Drawbars: brown = sub-harmonics, white = octaves, black = the other harmonics.
         add<SoundLed> ({ 144, 9, 14, 14 }, ctx, meterBase + 0, "the tonewheels (drawbars)");

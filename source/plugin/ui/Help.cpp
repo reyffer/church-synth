@@ -195,6 +195,10 @@ const char* fxControlHelp (const juce::String& effect, const juce::String& name)
         { "Reverb/Brightness", "lifts the highs of the tail: a brighter, more open reverb" },
         { "Reverb/Mod Depth", "how much the tail's pitch drifts: smooths metallic ringing, gives a lush, chorused tail" },
         { "Reverb/Mod Rate", "speed of the tail's drift" },
+        { "Rotary/Speed", "Slow (chorale) or Fast (tremolo). The organ presets connect the mod wheel here: past halfway it switches to Fast, "
+                          "back below halfway to Slow, and this switch shows the live speed (outlined in the wheel's colour). "
+                          "The lamp on the Organ panel shows it too and switches it with a click. For a button or footswitch: right-click > MIDI learn" },
+        { "Rotary/Brake", "stops both rotors (slowing down over the Ramp time); turn it down to start them again" },
         { "Organ Scanner/Mode", "V1-V3: vibrato, light to deep (pitch wobble only). C1-C3: chorus, the vibrato mixed with the dry organ for the classic swirl. C3 is the usual choice" },
         { "Organ Scanner/Rate", "speed of the scanner (about 6.9 Hz on the original, which ran at a fixed speed)" },
         { "Organ Scanner/Depth", "scales the mode's depth (50 % = as the mode is meant to be)" },

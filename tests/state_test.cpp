@@ -122,6 +122,77 @@ static void snapshotEditor (ChurchSynthProcessor& p, const juce::File& dir)
         ed->showView (1, 1);
         run (5, {}, false);
         shot ("live_links_fx");
+        // v0.6.1 mod connections: drag highlight, hover wheels (lines, then one wheel's range).
+        {
+            const auto saved = p.getRoutes();
+            auto r = saved;
+            const int cut = cs::findModDest ("f1_cutoff");
+            bool has = false;
+            for (int i = 0; i < r.count; ++i)
+                has = has || (r.routes[i].source == cs::SrcEnv2 && r.routes[i].dest == cut);
+            if (! has && r.count < cs::kMaxRoutes && cut >= 0)
+                r.routes[r.count++] = { cs::SrcEnv2, cut, 0.30f, -1, 1.0f };
+            if (r.count < cs::kMaxRoutes && cut >= 0)
+                r.routes[r.count++] = { cs::SrcLfo2, cut, -0.15f, -1, 1.0f };
+            ed->selectModSource (-1);
+            p.setRoutes (r);
+            const float oldCut = p.apvts.getRawParameterValue ("f1_cutoff")->load();
+            if (auto* prm = p.apvts.getParameter ("f1_cutoff"))
+                prm->setValueNotifyingHost (prm->convertTo0to1 (629.0f));
+            ed->showView (0, 1, 0);
+            run (5, { 48, 52, 55 }, false);
+            ed->setDraggingSourceForTest (cs::SrcEnv2);
+            shot ("live_drag_targets");
+            ed->setDraggingSourceForTest (-1);
+            ed->openModWheelsForTest ("f1_cutoff", -1);
+            run (2, {}, false);
+            shot ("live_wheels_lines");
+            const auto range = ed->openModWheelsForTest ("f1_cutoff", cs::SrcEnv2);
+            std::printf ("mod wheel range: %s\n", range.toRawUTF8());
+            shot ("live_wheels_range");
+            ed->openModWheelsForTest ("", -1); // closes
+            if (auto* prm = p.apvts.getParameter ("f1_cutoff"))
+                prm->setValueNotifyingHost (prm->convertTo0to1 (oldCut));
+            run (25, { 48, 52, 55 }, true);
+            // Rotary on bus B, mod wheel on its Speed, wheel up: the switch and the organ lamp show Fast.
+            auto setReal = [&p] (const char* id, float v) {
+                if (auto* prm = p.apvts.getParameter (id))
+                    prm->setValueNotifyingHost (prm->convertTo0to1 (v));
+            };
+            setReal ("fx_b1_type", (float) cs::fx::FxRotary);
+            setReal ("fx_b1_p1", 0.0f);
+            p.syncEffects();
+            auto r2 = p.getRoutes();
+            if (r2.count < cs::kMaxRoutes)
+                r2.routes[r2.count++] = { cs::SrcModWheel, cs::findModDest ("fx_b1_p1"), 1.0f, -1, 1.0f };
+            p.setRoutes (r2);
+            {
+                juce::MidiBuffer midi;
+                midi.addEvent (juce::MidiMessage::controllerEvent (1, 1, 110), 0);
+                buf.clear();
+                p.processBlock (buf, midi);
+            }
+            run (10, {}, false);
+            ed->showView (1, 1, 1);
+            run (3, {}, false);
+            shot ("live_fx_rotary_wheel");
+            std::printf ("rotary wheels: %s\n", ed->openModWheelsForTest ("fx_b1_p1", cs::SrcModWheel).toRawUTF8());
+            shot ("live_fx_rotary_wheels");
+            ed->openModWheelsForTest ("", -1);
+            const float oldType = p.apvts.getRawParameterValue ("e2_type")->load();
+            setReal ("e2_type", (float) cs::EngineOrgan);
+            ed->showView (0, 1, 1);
+            run (3, {}, false);
+            shot ("live_organ_lamp");
+            setReal ("e2_type", oldType);
+            {
+                juce::MidiBuffer midi;
+                midi.addEvent (juce::MidiMessage::controllerEvent (1, 1, 0), 0);
+                buf.clear();
+                p.processBlock (buf, midi);
+            }
+            p.setRoutes (saved);
+        }
         ed->showView (0, 1, 0);
         run (25, { 48, 55, 60, 64 }, true);
         shot ("live_release");

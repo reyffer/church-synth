@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include "ui/ModWheels.h"
 #include "ui/Help.h"
 #include "PresetManager.h"
 
@@ -272,12 +273,19 @@ class ChurchSynthEditor::Root final : public juce::Component
 {
 public:
     explicit Root (ui::UiContext& c)
-        : ctx (c), top (c), synth (c), fx (c), seq (c), strip (c), tabs (c), footer (c), browser (c)
+        : ctx (c), top (c), synth (c), fx (c), seq (c), strip (c), tabs (c), footer (c), browser (c), wheels (c)
     {
         for (auto* comp : std::initializer_list<juce::Component*> { &top, &synth, &fx, &seq, &strip, &tabs, &footer })
             addAndMakeVisible (comp);
         addChildComponent (browser);
         addAndMakeVisible (linkOverlay);
+        addAndMakeVisible (wheels);
+        wheels.tileBounds = [this] (int s) { return getLocalArea (&strip, strip.tileBounds (s)).toFloat(); };
+        wheels.blocked = [this] {
+            auto* dnd = juce::DragAndDropContainer::findParentDragContainerFor (this);
+            return browser.isVisible() || ctx.draggingSource >= 0 || (dnd != nullptr && dnd->isDragAndDropActive());
+        };
+        ctx.openWheels = [this] (juce::Component& target, int src) { wheels.open (target, src); };
         fx.setVisible (false);
         seq.setVisible (false);
         top.onPage = [this] (ui::Page p) { showPage (p); };
@@ -288,11 +296,10 @@ public:
         browser.onClose = [this] { showBrowser (false); };
         strip.onSourceClicked = [this] (int s) { tabs.showTabForSource (s); };
         footer.onRoutes = [this] { showRoutes(); };
-        addMouseListener (this, true); // see every click (to leave mod-edit mode)
+        addMouseListener (this, true); // see every click (to close the mod wheels / links)
         setSize (kW, kH);
     }
 
-    // Clicking anywhere except a knob or a source tile leaves mod-edit mode.
     // Help bar: describe the control under the mouse.
     void mouseMove (const juce::MouseEvent& e) override { updateHelp (e.eventComponent); }
     void mouseExit (const juce::MouseEvent& e) override
@@ -305,7 +312,10 @@ public:
     void updateHelp (juce::Component* c)
     {
         juce::String text;
-        for (; c != nullptr && c != this; c = c->getParentComponent())
+        if (c == &wheels)
+            text = "Mod wheels: hover one to see the range it sweeps; drag it up/down to change the amount (Shift = fine), "
+                   "double-click to remove, right-click for more";
+        for (; c != nullptr && c != this && c != &wheels; c = c->getParentComponent())
         {
             const auto id = c->getProperties()["paramId"].toString();
             if (id.isNotEmpty())
@@ -332,16 +342,24 @@ public:
     void mouseDown (const juce::MouseEvent& e) override
     {
         // A knob click lights up the sources modulating it; anything else clears that.
-        ui::Knob* knob = nullptr;
-        bool inStrip = false;
+        // A click outside the mod wheels closes them (a click on their knob keeps them).
+        if (e.eventComponent == &wheels)
+            return;
+        ui::ModTarget* target = nullptr;
+        bool inStrip = false, onWheelTarget = false;
         for (auto* c = e.eventComponent; c != nullptr && c != this; c = c->getParentComponent())
         {
-            if (knob == nullptr)
-                knob = dynamic_cast<ui::Knob*> (c);
+            if (target == nullptr)
+                if (auto* t = dynamic_cast<ui::ModTarget*> (c); t != nullptr && t->modDest() >= 0)
+                    target = t;
             inStrip = inStrip || c == &strip;
+            onWheelTarget = onWheelTarget || c == wheels.getTarget();
         }
-        ctx.focusDest (knob != nullptr ? knob->getDest() : -1);
-        if (ctx.selectedSource < 0 || knob != nullptr || inStrip)
+        if (wheels.isOpen() && ! onWheelTarget)
+            wheels.dismiss();
+        ctx.focusDest (target != nullptr ? target->modDest() : -1);
+        // Showing a source's links: a click on empty space (not a control or the strip) ends it.
+        if (ctx.selectedSource < 0 || target != nullptr || inStrip)
             return;
         ctx.clearSource();
     }
@@ -361,14 +379,16 @@ public:
             {
                 if (ch == &browser || ch == &linkOverlay || ! ch->isVisible())
                     continue;
-                if (auto* k = dynamic_cast<ui::Knob*> (ch))
+                if (ch == &wheels)
+                    continue;
+                if (auto* k = dynamic_cast<ui::ModTarget*> (ch))
                 {
-                    if (k->getDest() >= 0 && ui::visibleInEditor (*k) && ctx.hasRoute (src, k->getDest()))
+                    if (k->modDest() >= 0 && ui::visibleInEditor (*ch) && ctx.hasRoute (src, k->modDest()))
                     {
-                        const auto dial = getLocalArea (k, k->getDialBounds());
+                        const auto dial = getLocalArea (ch, k->modBounds());
                         const juce::Point<float> from (tile.getCentreX(), dial.getCentreY() < tile.getY() ? tile.getY() : tile.getBottom());
                         L.lines.push_back ({ from, dial });
-                        shown.insert (k->getDest());
+                        shown.insert (k->modDest());
                     }
                     continue;
                 }
@@ -445,6 +465,7 @@ public:
         footer.setBounds (0, kH - 28, kW, 28);
         browser.setBounds (0, 44, kW, kH - 44 - 28);
         linkOverlay.setBounds (getLocalBounds());
+        wheels.setBounds (getLocalBounds());
     }
 
     void paint (juce::Graphics& g) override { g.fillAll (ui::col::bg); }
@@ -467,6 +488,8 @@ public:
         {
             browser.refresh();
             browser.toFront (true);
+            wheels.close();
+            wheels.toFront (false);
             browser.grabKeyboardFocus();
             updateLinks();
         }
@@ -496,6 +519,7 @@ public:
     void tick (bool slow)
     {
         updateLinks();
+        wheels.tick();
         top.tickMeter();
         strip.tick();
         tabs.tick();
@@ -515,6 +539,7 @@ public:
     ui::Footer footer;
     ui::PresetBrowser browser;
     ModLinksOverlay linkOverlay;
+    ui::ModWheels wheels;
 };
 
 ChurchSynthEditor::ChurchSynthEditor (ChurchSynthProcessor& p) : AudioProcessorEditor (p), proc (p), ctx (p)
@@ -596,6 +621,11 @@ bool ChurchSynthEditor::keyPressed (const juce::KeyPress& k)
         proc.redo();
         return true;
     }
+    if (k == juce::KeyPress::escapeKey && root->wheels.isOpen())
+    {
+        root->wheels.dismiss();
+        return true;
+    }
     if (k == juce::KeyPress::escapeKey && ctx.selectedSource >= 0)
     {
         ctx.clearSource();
@@ -625,6 +655,51 @@ void ChurchSynthEditor::selectModSource (int source, int focusedDest)
     else if (ctx.selectedSource != source)
         ctx.selectSource (source);
     ctx.focusDest (focusedDest);
+}
+
+void ChurchSynthEditor::dragOperationStarted (const juce::DragAndDropTarget::SourceDetails& d)
+{
+    const auto s = d.description.toString();
+    if (s.startsWith ("modsrc:"))
+    {
+        root->wheels.close();
+        ctx.setDraggingSource (s.fromFirstOccurrenceOf ("modsrc:", false, false).getIntValue());
+    }
+}
+
+void ChurchSynthEditor::dragOperationEnded (const juce::DragAndDropTarget::SourceDetails&)
+{
+    ctx.setDraggingSource (-1);
+}
+
+void ChurchSynthEditor::setDraggingSourceForTest (int src)
+{
+    ctx.draggingSource = src;
+    root->repaint();
+}
+
+juce::String ChurchSynthEditor::openModWheelsForTest (const juce::String& paramId, int activeSource)
+{
+    juce::Component* found = nullptr;
+    std::function<void (juce::Component&)> walk = [&] (juce::Component& c) {
+        for (auto* ch : c.getChildren())
+        {
+            if (found != nullptr)
+                return;
+            if (auto* t = dynamic_cast<ui::ModTarget*> (ch); t != nullptr && t->modParamId() == paramId && ui::visibleInEditor (*ch))
+                found = ch;
+            else
+                walk (*ch);
+        }
+    };
+    walk (*root);
+    if (found == nullptr)
+    {
+        root->wheels.close();
+        return {};
+    }
+    root->wheels.open (*found, activeSource);
+    return root->wheels.rangeTextForTest();
 }
 
 void ChurchSynthEditor::showBrowserView (int bank, const juce::String& folder, bool allTags)

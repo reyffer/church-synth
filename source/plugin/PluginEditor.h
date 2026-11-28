@@ -66,6 +66,11 @@ public:
     void showBrowserView (int bank, const juce::String& folder, bool allTags);
     void selectModSource (int source, int focusedDest = -1); // mod links / knob focus
     void tickForTest(); // what the timers do, for screenshots without a message loop
+    void setDraggingSourceForTest (int src); // targets light up as if the source were being dragged
+    juce::String openModWheelsForTest (const juce::String& paramId, int activeSource); // returns the range text
+
+    void dragOperationStarted (const juce::DragAndDropTarget::SourceDetails&) override;
+    void dragOperationEnded (const juce::DragAndDropTarget::SourceDetails&) override;
 
 private:
     class Root;

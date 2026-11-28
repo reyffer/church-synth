@@ -19,6 +19,46 @@ void UiContext::selectSource (int s)
     sendChangeMessage();
 }
 
+float UiContext::sourceValue (int src) const noexcept
+{
+    if (src < 0 || src >= cs::NumModSources)
+        return 0.0f;
+    return proc.getSynth().uiSource[src].load (std::memory_order_relaxed);
+}
+
+bool UiContext::sourceBipolar (int s) const
+{
+    if (s >= cs::SrcLfo1 && s <= cs::SrcLfo3)
+        return boolValue ("lfo" + juce::String (s - cs::SrcLfo1 + 1) + "_bipolar");
+    if (s >= cs::SrcFunc1 && s <= cs::SrcFunc3)
+        return boolValue ("func" + juce::String (s - cs::SrcFunc1 + 1) + "_bipolar");
+    if (s >= cs::SrcRand1 && s <= cs::SrcRand3)
+        return boolValue ("rand" + juce::String (s - cs::SrcRand1 + 1) + "_bipolar");
+    return s >= cs::SrcComb1 && s <= cs::SrcComb3;
+}
+
+float UiContext::modulatedValue (const juce::String& id) const
+{
+    const float base = value (id);
+    const int d = cs::findModDest (id.toStdString());
+    if (d < 0)
+        return base;
+    const auto& md = cs::modDestinations()[(size_t) d];
+    float n = md.toNorm (base);
+    bool any = false;
+    for (int i = 0; i < cached.count; ++i)
+        if (cached.routes[i].dest == d)
+        {
+            const auto& r = cached.routes[i];
+            float amt = r.amount * sourceValue (r.source);
+            if (r.sidechain >= 0)
+                amt *= 1.0f - r.scAmount + r.scAmount * sourceValue (r.sidechain);
+            n += amt;
+            any = true;
+        }
+    return any ? md.fromNorm (juce::jlimit (0.0f, 1.0f, n)) : base;
+}
+
 void UiContext::refreshRoutes()
 {
     cached = proc.getRoutes();
@@ -157,48 +197,6 @@ juce::String formatValue (const cs::ParamDef& d, float v)
 // ===========================================================================
 // Knob
 // ===========================================================================
-class Knob::ModOverlay final : public juce::Component
-{
-public:
-    explicit ModOverlay (Knob& k) : knob (k) { setRepaintsOnMouseActivity (false); }
-    void mouseDown (const juce::MouseEvent& e) override
-    {
-        if (e.mods.isPopupMenu())
-        {
-            Knob::showContextMenu (knob.ctx, knob.paramId, &knob);
-            return;
-        }
-        startAmount = knob.ctx.routeAmount (knob.ctx.selectedSource, knob.dest);
-        knob.editingMod = true;
-        knob.modDragAmount = startAmount;
-    }
-    void mouseDrag (const juce::MouseEvent& e) override
-    {
-        if (! knob.editingMod)
-            return;
-        const float delta = (float) (-e.getDistanceFromDragStartY() + e.getDistanceFromDragStartX()) / 150.0f
-                            * (e.mods.isShiftDown() ? 0.2f : 1.0f);
-        knob.modDragAmount = juce::jlimit (-1.0f, 1.0f, startAmount + delta);
-        knob.ctx.setRouteAmount (knob.ctx.selectedSource, knob.dest, knob.modDragAmount, false);
-        knob.repaint();
-    }
-    void mouseUp (const juce::MouseEvent&) override
-    {
-        if (knob.editingMod)
-            knob.ctx.setRouteAmount (knob.ctx.selectedSource, knob.dest, knob.modDragAmount, true);
-        knob.editingMod = false;
-        knob.repaint();
-    }
-    void mouseDoubleClick (const juce::MouseEvent&) override
-    {
-        knob.ctx.removeRoute (knob.ctx.selectedSource, knob.dest);
-    }
-
-private:
-    Knob& knob;
-    float startAmount = 0.0f;
-};
-
 Knob::Knob (UiContext& c, const juce::String& id, const juce::String& l) : ctx (c), paramId (id), label (l)
 {
     getProperties().set ("paramId", id); // for the help bar
@@ -222,10 +220,9 @@ Knob::Knob (UiContext& c, const juce::String& id, const juce::String& l) : ctx (
     if (label.isEmpty() && pdef != nullptr)
         label = pdef->name;
     if (pdef != nullptr)
-        setTooltip (pdef->name + (dest >= 0 ? "  (drag a mod source here, right-click for MIDI learn)" : "  (right-click for MIDI learn)"));
+        setTooltip (pdef->name + (dest >= 0 ? "  (drag a mod source here; hover to see and edit its modulation; right-click for MIDI learn)"
+                                            : "  (right-click for MIDI learn)"));
 
-    overlay = std::make_unique<ModOverlay> (*this);
-    addChildComponent (*overlay);
     ctx.addChangeListener (this);
     changeListenerCallback (nullptr);
 }
@@ -237,9 +234,6 @@ Knob::~Knob()
 
 void Knob::changeListenerCallback (juce::ChangeBroadcaster*)
 {
-    const bool modMode = ctx.selectedSource >= 0 && dest >= 0;
-    overlay->setVisible (modMode);
-    overlay->setMouseCursor (modMode ? juce::MouseCursor::UpDownResizeCursor : juce::MouseCursor::NormalCursor);
     repaint();
 }
 
@@ -321,12 +315,15 @@ void Knob::resized()
 {
     const auto d = dialBounds().toNearestInt();
     slider.setBounds (d);
-    overlay->setBounds (d);
 }
 
 juce::String Knob::valueText() const
 {
-    const float v = (float) slider.getValue();
+    return textFor ((float) slider.getValue());
+}
+
+juce::String Knob::textFor (float v) const
+{
     if (formatter)
         return formatter (v);
     return pdef != nullptr ? formatValue (*pdef, v) : juce::String (v, 2);
@@ -373,11 +370,6 @@ void Knob::paint (juce::Graphics& g)
         auto text = getLocalBounds().removeFromBottom (15);
         juce::String t = juce::String (slider.getValue(), std::abs (slider.getValue() - std::round (slider.getValue())) < 0.01 ? 0 : 1);
         auto c = barDragging || hover ? col::text : col::accent;
-        if (editingMod)
-        {
-            t = (modDragAmount >= 0 ? "+" : "") + juce::String (juce::roundToInt (modDragAmount * 100.0f)) + " %";
-            c = sourceColour (ctx.selectedSource);
-        }
         g.setColour (c);
         g.setFont (font (11.0f));
         g.drawFittedText (t, text.expanded (4, 0), juce::Justification::centred, 1, 0.8f);
@@ -389,12 +381,7 @@ void Knob::paint (juce::Graphics& g)
     auto text = r.removeFromBottom (15);
     juce::String t = label;
     auto c = col::textDim;
-    if (editingMod)
-    {
-        t = (modDragAmount >= 0 ? "+" : "") + juce::String (juce::roundToInt (modDragAmount * 100.0f)) + " %";
-        c = sourceColour (ctx.selectedSource);
-    }
-    else if (slider.isMouseButtonDown() || hover)
+    if (slider.isMouseButtonDown() || hover)
     {
         t = valueText();
         c = col::text;
@@ -414,10 +401,13 @@ void Knob::paintOverChildren (juce::Graphics& g)
         const auto t = dialBounds();
         const float range = pdef != nullptr ? pdef->max - pdef->min : 8.0f;
         const float v = juce::jlimit (0.0f, 1.0f, (float) slider.getValue() / juce::jmax (1.0f, range));
-        if (dropHover)
+        if (ctx.draggingSource >= 0) // a source is being dragged: this bar can take it
         {
-            g.setColour (col::gold.withAlpha (0.6f));
-            g.drawRoundedRectangle (t.expanded (4.0f, 3.0f), 4.0f, 2.0f);
+            const auto sc = sourceColour (ctx.draggingSource);
+            g.setColour (sc.withAlpha (dropHover ? 0.22f : 0.08f));
+            g.fillRoundedRectangle (t.expanded (4.0f, 3.0f), 4.0f);
+            g.setColour (sc.withAlpha (dropHover ? 1.0f : 0.6f));
+            g.drawRoundedRectangle (t.expanded (4.0f, 3.0f), 4.0f, dropHover ? 2.5f : 1.5f);
         }
         float x = t.getRight() + 5.0f;
         for (const auto& m : ctx.routesTo (dest))
@@ -428,11 +418,6 @@ void Knob::paintOverChildren (juce::Graphics& g)
             g.fillRect (juce::Rectangle<float> (x, juce::jmin (y0, y1), sel ? 3.0f : 2.0f, juce::jmax (2.0f, std::abs (y1 - y0))));
             x += 3.0f;
         }
-        if (ctx.selectedSource >= 0 && ! ctx.hasRoute (ctx.selectedSource, dest))
-        {
-            g.setColour (sourceColour (ctx.selectedSource).withAlpha (0.8f));
-            g.fillEllipse (t.getRight() + 2.0f, t.getY() - 8.0f, 5.0f, 5.0f);
-        }
         return;
     }
     const auto d = dialBounds();
@@ -441,10 +426,13 @@ void Knob::paintOverChildren (juce::Graphics& g)
     const float start = juce::MathConstants<float>::pi * 1.25f, end = juce::MathConstants<float>::pi * 2.75f;
     const float pos = (float) slider.valueToProportionOfLength (slider.getValue());
 
-    if (dropHover)
+    if (ctx.draggingSource >= 0) // a source is being dragged: this knob can take it
     {
-        g.setColour (col::gold.withAlpha (0.6f));
-        g.drawEllipse (d.reduced (1.0f), 2.0f);
+        const auto sc = sourceColour (ctx.draggingSource);
+        g.setColour (sc.withAlpha (dropHover ? 0.25f : 0.08f));
+        g.fillEllipse (d.expanded (3.0f));
+        g.setColour (sc.withAlpha (dropHover ? 1.0f : 0.6f));
+        g.drawEllipse (d.expanded (3.0f), dropHover ? 2.5f : 1.5f);
     }
     const auto mods = ctx.routesTo (dest);
     float ringR = radius + 1.0f;
@@ -459,12 +447,6 @@ void Knob::paintOverChildren (juce::Graphics& g)
         g.strokePath (arc, juce::PathStrokeType (sel ? 2.6f : 1.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
         ringR += 0.0f;
     }
-    // Mod-edit mode: a dot shows this knob can take the selected source.
-    if (ctx.selectedSource >= 0 && ! ctx.hasRoute (ctx.selectedSource, dest))
-    {
-        g.setColour (sourceColour (ctx.selectedSource).withAlpha (0.8f));
-        g.fillEllipse (d.getRight() - 6.0f, d.getY(), 5.0f, 5.0f);
-    }
 }
 
 bool Knob::isInterestedInDragSource (const SourceDetails& s)
@@ -477,8 +459,11 @@ void Knob::itemDropped (const SourceDetails& s)
     dropHover = false;
     const int src = s.description.toString().fromFirstOccurrenceOf ("modsrc:", false, false).getIntValue();
     if (! ctx.hasRoute (src, dest))
-        ctx.setRouteAmount (src, dest, 0.25f);
-    repaint(); // the route is made; knobs stay in normal mode (select the tile to edit amounts)
+        ctx.setRouteAmount (src, dest, 0.0f); // starts at 0: drag its wheel to set the amount
+    ctx.setDraggingSource (-1);
+    repaint();
+    if (ctx.openWheels)
+        ctx.openWheels (*this, src);
 }
 
 void Knob::showContextMenu (UiContext& ctx, const juce::String& paramId, juce::Component* target)

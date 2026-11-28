@@ -45,8 +45,9 @@ public:
     {
         scope.setInterceptsMouseClicks (false, false);
         addAndMakeVisible (scope);
-        setTooltip (juce::String (cs::modSourceName (src)) + ": click to select (lines show the knobs it moves; drag knobs to set amounts), "
-                    "or drag onto a knob. The small dot means it's routed somewhere.");
+        setTooltip (juce::String (cs::modSourceName (src)) + ": drag onto a knob to connect it (the knobs it can move light up). "
+                    "Click to show lines to the knobs it already moves. Hover a modulated knob to see and edit its amounts. "
+                    "The small dot means it's routed somewhere.");
         setMouseCursor (juce::MouseCursor::PointingHandCursor);
     }
     void resized() override { scope.setBounds (getLocalBounds().withTrimmedTop (22).reduced (3, 4)); }

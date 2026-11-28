@@ -85,18 +85,24 @@ juce::String fxValueText (int type, int k, float v, bool sync)
 }
 
 // A discrete effect control as a menu (or an on/off pill for switches).
-class FxMenu final : public juce::Component, public juce::SettableTooltipClient
+class FxMenu final : public juce::Component,
+                     public juce::SettableTooltipClient,
+                     public juce::DragAndDropTarget,
+                     public ModTarget,
+                     private juce::Timer
 {
 public:
     FxMenu (UiContext& c, const juce::String& paramId) : ctx (c), id (paramId)
     {
         getProperties().set ("paramId", paramId); // for the help bar
+        dest = cs::findModDest (id.toStdString());
         if (auto* p = ctx.param (id))
         {
             att = std::make_unique<juce::ParameterAttachment> (*p, [this] (float v) { value = v; repaint(); });
             att->sendInitialUpdate();
         }
         setMouseCursor (juce::MouseCursor::PointingHandCursor);
+        startTimerHz (15);
     }
     void setChoices (const juce::String& label, const juce::StringArray& c)
     {
@@ -106,20 +112,55 @@ public:
         choices = c;
         repaint();
     }
+    juce::Rectangle<float> pill() const { return getLocalBounds().withTrimmedTop (22).withHeight (22).reduced (2, 0).toFloat(); }
+    juce::String textFor (float v) const
+    {
+        if (choices.isEmpty())
+            return {};
+        return choices.size() == 2 ? (v >= 0.5f ? choices[1] : choices[0]) : choices[choiceIndex (v, choices.size())];
+    }
+
+    // ModTarget: the mod wheels and links work on FX menus and switches too.
+    int modDest() const override { return dest; }
+    juce::String modParamId() const override { return id; }
+    juce::Rectangle<float> modBounds() const override { return pill(); }
+    juce::String modValueText (float v) const override { return textFor (v); }
+
     void paint (juce::Graphics& g) override
     {
         drawCaption (g, getLocalBounds().removeFromTop (16), caption);
-        auto r = getLocalBounds().withTrimmedTop (22).withHeight (22).reduced (2, 0).toFloat();
+        auto r = pill();
+        // What it is doing now: with a connection (say the mod wheel on Rotary Speed) the
+        // live, modulated value, outlined in the source's colour when it differs from the setting.
+        const auto routes = dest >= 0 ? ctx.routesTo (dest) : std::vector<std::pair<int, float>> {};
+        const float shown = routes.empty() ? value : ctx.modulatedValue (id);
+        const bool moved = ! routes.empty() && textFor (shown) != textFor (value);
         const bool isSwitch = choices.size() == 2;
-        const bool on = isSwitch && value >= 0.5f;
+        const bool on = isSwitch && shown >= 0.5f;
         g.setColour (on ? col::accent.withAlpha (0.18f) : col::panelLo);
         g.fillRoundedRectangle (r, r.getHeight() * 0.5f);
-        g.setColour (on ? col::accent.withAlpha (0.7f) : col::border);
-        g.drawRoundedRectangle (r, r.getHeight() * 0.5f, 1.0f);
+        g.setColour (moved ? sourceColour (routes.front().first) : on ? col::accent.withAlpha (0.7f) : col::border);
+        g.drawRoundedRectangle (r, r.getHeight() * 0.5f, moved ? 1.8f : 1.0f);
         g.setColour (isSwitch && ! on ? col::textDim : col::accent);
         g.setFont (font (12.0f));
-        const juce::String t = isSwitch ? (on ? choices[1] : choices[0]) : choices[choiceIndex (value, choices.size())];
-        g.drawFittedText (t, r.toNearestInt().reduced (6, 0), juce::Justification::centred, 1, 0.7f);
+        g.drawFittedText (textFor (shown), r.toNearestInt().reduced (6, 0), juce::Justification::centred, 1, 0.7f);
+        // One dot per connection, in the source's colour.
+        float x = r.getRight() - 6.0f;
+        for (const auto& m : routes)
+        {
+            g.setColour (sourceColour (m.first).withAlpha (ctx.selectedSource < 0 || ctx.selectedSource == m.first ? 1.0f : 0.35f));
+            g.fillEllipse (x - 2.5f, r.getY() - 6.0f, 5.0f, 5.0f);
+            x -= 7.0f;
+        }
+        if (ctx.draggingSource >= 0 && dest >= 0) // a source is being dragged: this can take it
+        {
+            const auto sc = sourceColour (ctx.draggingSource);
+            const auto h = r.expanded (3.0f);
+            g.setColour (sc.withAlpha (dropHover ? 0.25f : 0.08f));
+            g.fillRoundedRectangle (h, h.getHeight() * 0.5f);
+            g.setColour (sc.withAlpha (dropHover ? 1.0f : 0.6f));
+            g.drawRoundedRectangle (h, h.getHeight() * 0.5f, dropHover ? 2.5f : 1.5f);
+        }
     }
     void mouseDown (const juce::MouseEvent& e) override
     {
@@ -145,12 +186,51 @@ public:
         });
     }
 
+    bool isInterestedInDragSource (const SourceDetails& s) override { return dest >= 0 && s.description.toString().startsWith ("modsrc:"); }
+    void itemDragEnter (const SourceDetails&) override { dropHover = true; repaint(); }
+    void itemDragExit (const SourceDetails&) override { dropHover = false; repaint(); }
+    void itemDropped (const SourceDetails& s) override
+    {
+        dropHover = false;
+        const int src = s.description.toString().fromFirstOccurrenceOf ("modsrc:", false, false).getIntValue();
+        if (! ctx.hasRoute (src, dest))
+            ctx.setRouteAmount (src, dest, 0.0f);
+        ctx.setDraggingSource (-1);
+        repaint();
+        if (ctx.openWheels)
+            ctx.openWheels (*this, src);
+    }
+
 private:
     UiContext& ctx;
     juce::String id, caption;
     juce::StringArray choices;
     std::unique_ptr<juce::ParameterAttachment> att;
     float value = 0.0f;
+    int dest = -1;
+    bool dropHover = false;
+    juce::String lastKey;
+
+    void timerCallback() override
+    {
+        if (! visibleInEditor (*this))
+            return;
+        juce::String key;
+        key << ctx.draggingSource << "|" << ctx.selectedSource;
+        if (dest >= 0)
+        {
+            const auto routes = ctx.routesTo (dest);
+            for (const auto& m : routes)
+                key << m.first << ":" << m.second << ",";
+            if (! routes.empty())
+                key << textFor (ctx.modulatedValue (id));
+        }
+        if (key != lastKey)
+        {
+            lastKey = key;
+            repaint();
+        }
+    }
 };
 
 // Param EQ: response curve with draggable band points.

@@ -284,10 +284,10 @@ Footer::Footer (UiContext& c) : ctx (c)
         b->fontSize = 11.0f;
         addAndMakeVisible (b);
     }
-    done.text = "Done";
+    done.text = "Hide";
     done.fontSize = 11.0f;
     done.lit = true;
-    done.setTooltip ("Finish editing this source's modulation (or click any empty area, or press Esc)");
+    done.setTooltip ("Hide this source's connection lines (or click any empty area, or press Esc)");
     done.onClick = [this] { ctx.clearSource(); };
     addChildComponent (done);
     ctx.addChangeListener (this);
@@ -351,8 +351,8 @@ void Footer::paint (juce::Graphics& g)
         // Mod-edit mode banner.
         g.setColour (sourceColour (ctx.selectedSource));
         g.setFont (font (11.5f, true));
-        g.drawText (juce::String ("Editing ") + cs::modSourceName (ctx.selectedSource)
-                        + ": drag knobs to set amounts, double-click a knob to remove",
+        g.drawText (cs::modSourceName (ctx.selectedSource)
+                        + juce::String (": lines show what it moves. Hover a knob to edit the amount"),
                     r.withWidth (414), juce::Justification::centredLeft);
     }
     else
@@ -361,7 +361,7 @@ void Footer::paint (juce::Graphics& g)
         g.setColour (learnText.isNotEmpty() ? col::gold : (helpText.isNotEmpty() ? col::text : col::textFaint));
         g.drawFittedText (learnText.isNotEmpty() ? learnText
                           : helpText.isNotEmpty() ? helpText
-                                                  : juce::String ("Hover a control to see what it does. Click a mod source to edit amounts on the knobs; right-click a control for MIDI learn."),
+                                                  : juce::String ("Hover a control to see what it does. Drag a mod source onto a knob to connect it; hover a modulated knob to edit the amount. Right-click for MIDI learn."),
                           r, juce::Justification::centredLeft, 1, 0.8f);
     }
     g.setColour (col::textDim);

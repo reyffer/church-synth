@@ -11,15 +11,42 @@
 namespace ui
 {
 // Shared editor state: the selected modulation source and route helpers.
+class Knob;
+
+// Something a mod source can be connected to (a knob, a drawbar, an FX menu / switch).
+// The hover wheels (ModWheels) work on these.
+struct ModTarget
+{
+    virtual ~ModTarget() = default;
+    virtual int modDest() const = 0;
+    virtual juce::String modParamId() const = 0;
+    virtual juce::Rectangle<float> modBounds() const = 0;           // the dial / bar / pill, local coordinates
+    virtual juce::String modValueText (float realValue) const = 0; // in the control's own units
+};
+
 class UiContext final : public juce::ChangeBroadcaster
 {
 public:
     explicit UiContext (ChurchSynthProcessor& p);
     ChurchSynthProcessor& proc;
 
-    int selectedSource = -1; // >= 0: knobs edit this source's route amounts
+    // A clicked source tile: its links are shown (view only; knobs behave normally).
+    int selectedSource = -1;
     void selectSource (int s); // toggles
     void clearSource() { if (selectedSource >= 0) { selectedSource = -1; sendChangeMessage(); } }
+
+    // A source tile being dragged: every control it can reach lights up in its colour.
+    int draggingSource = -1;
+    void setDraggingSource (int s) { if (s != draggingSource) { draggingSource = s; sendChangeMessage(); } }
+
+    // Opens the hover wheels on a target at once (after a drop), with one source's wheel active.
+    std::function<void (juce::Component&, int activeSource)> openWheels;
+
+    // Live modulation (editor only): a source's current value, whether it swings both ways,
+    // and a parameter's value including its routes (real units), e.g. a switch flipped by the mod wheel.
+    float sourceValue (int src) const noexcept;
+    bool sourceBipolar (int src) const;
+    float modulatedValue (const juce::String& id) const;
 
     // The knob last clicked (its destination): the sources modulating it light up in the strip.
     int focusedDest = -1;
@@ -53,6 +80,7 @@ juce::String formatValue (const cs::ParamDef& d, float v);
 class Knob : public juce::Component,
              public juce::DragAndDropTarget,
              public juce::SettableTooltipClient,
+             public ModTarget,
              private juce::ChangeListener
 {
 public:
@@ -70,6 +98,12 @@ public:
     int getDest() const noexcept { return dest; } // modulation destination, or -1
     juce::Rectangle<float> getDialBounds() const { return dialBounds(); }
     juce::Slider& getSlider() noexcept { return slider; }
+    juce::String textFor (float realValue) const; // the value as this knob shows it
+
+    int modDest() const override { return dest; }
+    juce::String modParamId() const override { return paramId; }
+    juce::Rectangle<float> modBounds() const override { return dialBounds(); }
+    juce::String modValueText (float v) const override { return textFor (v); }
 
     void resized() override;
     void paint (juce::Graphics&) override;
@@ -89,18 +123,14 @@ public:
     static void showContextMenu (UiContext& ctx, const juce::String& paramId, juce::Component* target);
 
 private:
-    class ModOverlay;
-
     UiContext& ctx;
     juce::String paramId, label;
     const cs::ParamDef* pdef = nullptr;
     int dest = -1;
     juce::Slider slider;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> att;
-    std::unique_ptr<ModOverlay> overlay;
     std::function<juce::String (float)> formatter;
-    bool hover = false, dropHover = false, editingMod = false;
-    float modDragAmount = 0.0f;
+    bool hover = false, dropHover = false;
     bool drawbar = false, barDragging = false;
     juce::Colour barHead;
     float barStart = 0.0f;
