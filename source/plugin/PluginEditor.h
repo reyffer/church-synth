@@ -68,6 +68,7 @@ public:
     void tickForTest(); // what the timers do, for screenshots without a message loop
     void setDraggingSourceForTest (int src); // targets light up as if the source were being dragged
     juce::String openModWheelsForTest (const juce::String& paramId, int activeSource); // returns the range text
+    bool modWheelsMenuForTest (int src, int item); // 1 remove, 2 zero, 3 invert
 
     void dragOperationStarted (const juce::DragAndDropTarget::SourceDetails&) override;
     void dragOperationEnded (const juce::DragAndDropTarget::SourceDetails&) override;

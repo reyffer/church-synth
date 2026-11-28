@@ -21,12 +21,21 @@
 #include <cstdio>
 
 // Optional: state_test --snapshot <dir> [preset name] writes PNGs of the editor pages (layout check).
-static void snapshotEditor (ChurchSynthProcessor& p, const juce::File& dir)
+static int snapshotEditor (ChurchSynthProcessor& p, const juce::File& dir)
 {
+    int snapFailures = 0;
+    dir.createDirectory();
+    auto expect = [&snapFailures] (bool ok, const char* what) {
+        if (! ok)
+        {
+            std::printf ("FAIL: %s\n", what);
+            ++snapFailures;
+        }
+    };
     std::unique_ptr<juce::AudioProcessorEditor> base (p.createEditor());
     auto* ed = dynamic_cast<ChurchSynthEditor*> (base.get());
     if (ed == nullptr)
-        return;
+        return 1;
     ed->setSize (1280, 800);
     auto shot = [&] (const juce::String& name) {
         const auto img = ed->createComponentSnapshot (ed->getLocalBounds(), true, 1.0f);
@@ -155,6 +164,22 @@ static void snapshotEditor (ChurchSynthProcessor& p, const juce::File& dir)
             ed->selectModSource (-1);
             const auto range = ed->openModWheelsForTest ("f1_cutoff", cs::SrcEnv2);
             std::printf ("mod wheel range: %s\n", range.toRawUTF8());
+            // Right-click menu items (v0.6.2 bug: the panel closed while the menu was up, so they did nothing).
+            {
+                auto amountOf = [&p, cut] (int src) {
+                    const auto rr = p.getRoutes();
+                    for (int i = 0; i < rr.count; ++i)
+                        if (rr.routes[i].source == src && rr.routes[i].dest == cut)
+                            return rr.routes[i].amount;
+                    return -99.0f;
+                };
+                const float before = amountOf (cs::SrcEnv2);
+                expect (ed->modWheelsMenuForTest (cs::SrcEnv2, 3) && std::abs (amountOf (cs::SrcEnv2) + before) < 1.0e-4f, "mod wheel menu: invert");
+                expect (ed->modWheelsMenuForTest (cs::SrcEnv2, 3) && std::abs (amountOf (cs::SrcEnv2) - before) < 1.0e-4f, "mod wheel menu: invert back");
+                expect (ed->modWheelsMenuForTest (cs::SrcLfo2, 2) && amountOf (cs::SrcLfo2) == 0.0f, "mod wheel menu: set to 0");
+                expect (ed->modWheelsMenuForTest (cs::SrcLfo2, 1) && amountOf (cs::SrcLfo2) == -99.0f, "mod wheel menu: remove");
+                ed->openModWheelsForTest ("f1_cutoff", cs::SrcEnv2);
+            }
             shot ("live_wheels_range");
             ed->openModWheelsForTest ("", -1); // closes
             if (auto* prm = p.apvts.getParameter ("f1_cutoff"))
@@ -218,6 +243,7 @@ static void snapshotEditor (ChurchSynthProcessor& p, const juce::File& dir)
         ed->showBrowserView (3, favs[0], false);
         shot ("browser_fav_folder");
     }
+    return snapFailures;
 }
 
 
@@ -1449,7 +1475,7 @@ int main (int argc, char** argv)
                 if (pi.name == juce::String (argv[3]))
                     b.presets().load (pi);
         b.syncEffects();
-        snapshotEditor (b, juce::File (argv[2]));
+        failures += snapshotEditor (b, juce::File (argv[2]));
     }
 
     std::printf (failures == 0 ? "State tests passed.\n" : "State tests FAILED (%d).\n", failures);

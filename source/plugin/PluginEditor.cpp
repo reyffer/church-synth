@@ -702,6 +702,11 @@ juce::String ChurchSynthEditor::openModWheelsForTest (const juce::String& paramI
     return root->wheels.rangeTextForTest();
 }
 
+bool ChurchSynthEditor::modWheelsMenuForTest (int src, int item)
+{
+    return root->wheels.menuForTest (src, item);
+}
+
 void ChurchSynthEditor::showBrowserView (int bank, const juce::String& folder, bool allTags)
 {
     root->showBrowser (true);

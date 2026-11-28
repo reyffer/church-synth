@@ -47,6 +47,7 @@ public:
     // For tests / snapshots.
     int activeSource() const noexcept;
     juce::String rangeTextForTest() const;
+    bool menuForTest (int src, int item); // runs a right-click menu item as if picked after a pause
 
 private:
     struct Wheel
@@ -75,6 +76,8 @@ private:
     const Wheel* findWheel (int src) const;
     void setAmount (int src, float amount, bool record);
     void showMenu (int src);
+    void menuAction (int src, int dest, int item);
+    bool menuOpen = false;
     void drawRange (juce::Graphics&, juce::Rectangle<float> area, const Wheel&) const;
     void rangeTexts (const Wheel&, juce::String& a, juce::String& b, bool& bipolar) const;
 };

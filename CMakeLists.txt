@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 
 set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
 
-project(ChurchSynth VERSION 0.6.2 LANGUAGES C CXX)
+project(ChurchSynth VERSION 0.6.3 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -139,5 +139,6 @@ if(CS_BUILD_PLUGIN)
             juce::juce_recommended_config_flags)
         add_test(NAME plugin_state_test COMMAND cs_state_test)
         add_test(NAME plugin_thread_stress COMMAND cs_state_test --stress-threads 8)
+        add_test(NAME plugin_ui_snapshots COMMAND cs_state_test --snapshot ${CMAKE_BINARY_DIR}/ui_snapshots)
     endif()
 endif()

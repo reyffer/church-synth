@@ -183,6 +183,8 @@ void ModWheels::tick()
             setAmount (w->src, w->amount, true);
         wheelEditSrc = -1;
     }
+    if (menuOpen) // right-click menu up: keep the panel as it is
+        return;
     if (blocked && blocked())
     {
         close();
@@ -509,33 +511,71 @@ void ModWheels::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWhee
 
 void ModWheels::showMenu (int src)
 {
+    auto* t = modTarget();
+    if (t == nullptr || findWheel (src) == nullptr)
+        return;
     juce::PopupMenu m;
     m.addSectionHeader (cs::modSourceName (src));
     m.addItem (1, "Remove connection");
     m.addItem (2, "Set amount to 0 %");
     m.addItem (3, "Invert amount");
+    // The menu is its own window: while it is open the mouse is "off" the panel, so the
+    // hover logic must not close the panel (that used to drop the route before the click).
+    menuOpen = true;
+    const int dest = t->modDest();
     juce::Component::SafePointer<ModWheels> self (this);
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withTargetScreenArea (localAreaToGlobal (panel)),
-                     [self, src] (int r) {
-                         if (self == nullptr || r == 0)
-                             return;
-                         auto* t = self->modTarget();
-                         const auto* w = self->findWheel (src);
-                         if (t == nullptr || w == nullptr)
-                             return;
-                         if (r == 1)
-                         {
-                             self->ctx.removeRoute (src, t->modDest());
-                             self->clickedSrc = self->hoverSrc = -1;
-                             self->rebuild();
-                         }
-                         else if (r == 2)
-                             self->setAmount (src, 0.0f, true);
-                         else if (r == 3)
-                             self->setAmount (src, -w->amount, true);
+                     [self, src, dest] (int r) {
                          if (self != nullptr)
-                             self->repaint();
+                             self->menuAction (src, dest, r);
                      });
+}
+
+void ModWheels::menuAction (int src, int dest, int item)
+{
+    menuOpen = false;
+    leftAt = 0;
+    if (item <= 0 || dest < 0)
+        return;
+    // Act on the route itself (captured when the menu opened), whatever the panel shows now.
+    float amount = 0.0f;
+    bool found = false;
+    for (const auto& [s, a] : ctx.routesTo (dest))
+        if (s == src)
+        {
+            amount = a;
+            found = true;
+        }
+    if (! found)
+        return;
+    if (item == 1)
+        ctx.removeRoute (src, dest);
+    else
+        ctx.setRouteAmount (src, dest, item == 2 ? 0.0f : -amount, true);
+    if (item == 1)
+        clickedSrc = hoverSrc = -1;
+    if (auto* t = modTarget(); t != nullptr && t->modDest() == dest)
+    {
+        target->repaint();
+        rebuild();
+    }
+    repaint();
+}
+
+bool ModWheels::menuForTest (int src, int item)
+{
+    auto* t = modTarget();
+    if (t == nullptr)
+        return false;
+    const int dest = t->modDest();
+    menuOpen = true;
+    tick(); // the menu is up: the mouse is elsewhere for longer than the close grace
+    juce::Thread::sleep ((int) kCloseGraceMs + 60);
+    tick();
+    if (! isOpen())
+        return false;
+    menuAction (src, dest, item);
+    return true;
 }
 
 } // namespace ui
