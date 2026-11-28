@@ -147,6 +147,12 @@ static void snapshotEditor (ChurchSynthProcessor& p, const juce::File& dir)
             ed->openModWheelsForTest ("f1_cutoff", -1);
             run (2, {}, false);
             shot ("live_wheels_lines");
+            // Env 2's links showing and the cutoff focused, as in Reyffer's v0.6.1 screenshot: one line per source.
+            ed->selectModSource (cs::SrcEnv2, cut);
+            ed->openModWheelsForTest ("f1_cutoff", -1);
+            run (2, {}, false);
+            shot ("live_wheels_with_links");
+            ed->selectModSource (-1);
             const auto range = ed->openModWheelsForTest ("f1_cutoff", cs::SrcEnv2);
             std::printf ("mod wheel range: %s\n", range.toRawUTF8());
             shot ("live_wheels_range");

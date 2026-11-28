@@ -328,15 +328,19 @@ void ModWheels::paint (juce::Graphics& g)
         return;
     const int active = activeSource();
 
-    // Lines to the source tiles (only while no wheel is being looked at).
-    if (active < 0 && tileBounds)
+    // Lines from the sources to the control itself (never to the panel: the panel is only a
+    // read-out). Same path as the links overlay, so a source whose links are showing isn't drawn twice.
+    auto* t = modTarget();
+    if (active < 0 && tileBounds && t != nullptr)
+    {
+        const auto dial = getLocalArea (target.getComponent(), t->modBounds());
+        const auto to = dial.getCentre();
         for (const auto& w : wheels)
         {
             const auto tile = tileBounds (w.src);
-            if (tile.isEmpty())
+            if (tile.isEmpty() || w.src == ctx.selectedSource)
                 continue;
-            const auto from = w.r.getCentre();
-            const juce::Point<float> to (tile.getCentreX(), from.y < tile.getY() ? tile.getY() : tile.getBottom());
+            const juce::Point<float> from (tile.getCentreX(), to.y < tile.getY() ? tile.getY() : tile.getBottom());
             const float dy = (to.y - from.y) * 0.5f;
             juce::Path p;
             p.startNewSubPath (from);
@@ -345,17 +349,19 @@ void ModWheels::paint (juce::Graphics& g)
             g.setColour (c.withAlpha (0.6f));
             g.strokePath (p, juce::PathStrokeType (1.8f));
             g.setColour (c);
-            g.fillEllipse (juce::Rectangle<float> (7.0f, 7.0f).withCentre (to));
+            g.fillEllipse (juce::Rectangle<float> (7.0f, 7.0f).withCentre (from));
             g.drawRect (tile, 1.5f);
         }
+    }
 
     const auto pr = panel.toFloat();
     g.setColour (juce::Colours::black.withAlpha (0.35f));
     g.fillRoundedRectangle (pr.translated (0.0f, 3.0f), 7.0f);
     g.setColour (col::panelHi);
     g.fillRoundedRectangle (pr, 7.0f);
-    g.setColour (active >= 0 ? sourceColour (active).withAlpha (0.8f) : col::border);
-    g.drawRoundedRectangle (pr.reduced (0.5f), 7.0f, 1.2f);
+    // Outline in the connection's colour from the start (the hovered one, else the first).
+    g.setColour (sourceColour (active >= 0 ? active : wheels.front().src).withAlpha (0.85f));
+    g.drawRoundedRectangle (pr.reduced (0.5f), 7.0f, 1.4f);
 
     for (const auto& w : wheels)
     {

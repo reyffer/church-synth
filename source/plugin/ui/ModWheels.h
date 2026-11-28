@@ -2,7 +2,7 @@
 
 // Hover wheels: rest the mouse ~0.5 s on a knob (or FX menu) that is modulated and a
 // small panel opens beside it with one wheel per incoming connection, in the source's
-// colour, plus a line from each wheel to its source tile. Hover or click a wheel: the
+// colour (outlined in the first one's colour), plus a line from each source tile to the control itself. Hover or click a wheel: the
 // lines go and the panel shows the source, the amount and the range it sweeps in real
 // units ("Env 2  +30 %  /  629 Hz -> 5.27 kHz"). Drag a wheel up/down to change the
 // amount (Shift = fine), mouse wheel to nudge, double-click or right-click to remove.
